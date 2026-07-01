@@ -1,0 +1,65 @@
+import pytest
+
+from blue_web_source.source.web.extractor import ExtractResult, WebExtractor
+
+_SAMPLE_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta name="author" content="Jane Doe">
+  <meta name="description" content="An article about testing.">
+  <title>Test Article</title>
+</head>
+<body>
+  <nav>Site navigation</nav>
+  <article>
+    <h1>Test Article</h1>
+    <p>This is the first paragraph with meaningful content about a topic.</p>
+    <p>This is the second paragraph with more details about the subject matter.</p>
+  </article>
+  <footer>Footer content</footer>
+</body>
+</html>"""
+
+_BOILERPLATE_ONLY_HTML = """<!DOCTYPE html>
+<html>
+<head><title>Nav only</title></head>
+<body>
+  <nav><ul><li>Home</li><li>About</li></ul></nav>
+</body>
+</html>"""
+
+
+def test_extract_returns_extract_result():
+    extractor = WebExtractor()
+    result = extractor.extract(_SAMPLE_HTML, "https://example.com/article")
+    assert result is not None
+    assert isinstance(result, ExtractResult)
+    assert result.url == "https://example.com/article"
+    assert len(result.text) > 0
+
+
+def test_extract_captures_main_content():
+    extractor = WebExtractor()
+    result = extractor.extract(_SAMPLE_HTML, "https://example.com/article")
+    assert result is not None
+    assert "meaningful content" in result.text or "first paragraph" in result.text
+
+
+def test_extract_returns_none_for_boilerplate_only():
+    extractor = WebExtractor()
+    result = extractor.extract(_BOILERPLATE_ONLY_HTML, "https://example.com/nav")
+    assert result is None
+
+
+def test_extract_returns_none_for_empty_html():
+    extractor = WebExtractor()
+    result = extractor.extract("", "https://example.com")
+    assert result is None
+
+
+def test_extract_title_from_metadata():
+    extractor = WebExtractor()
+    result = extractor.extract(_SAMPLE_HTML, "https://example.com/article")
+    assert result is not None
+    assert result.title is not None
+    assert "Test Article" in result.title
