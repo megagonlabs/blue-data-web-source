@@ -22,9 +22,9 @@ _SAMPLE_HTML = """<!DOCTYPE html>
 
 _BOILERPLATE_ONLY_HTML = """<!DOCTYPE html>
 <html>
-<head><title>Nav only</title></head>
+<head><title>App Shell</title></head>
 <body>
-  <nav><ul><li>Home</li><li>About</li></ul></nav>
+  <div id="app" data-reactroot=""></div>
 </body>
 </html>"""
 
@@ -63,3 +63,33 @@ def test_extract_title_from_metadata():
     assert result is not None
     assert result.title is not None
     assert "Test Article" in result.title
+
+
+def test_extract_author_from_metadata():
+    extractor = WebExtractor()
+    result = extractor.extract(_SAMPLE_HTML, "https://example.com/article")
+    assert result is not None
+    assert result.author == "Jane Doe"
+
+
+def test_extract_description_from_metadata():
+    extractor = WebExtractor()
+    result = extractor.extract(_SAMPLE_HTML, "https://example.com/article")
+    assert result is not None
+    assert result.description is not None
+    assert "testing" in result.description.lower()
+
+
+def test_extract_url_preserved():
+    extractor = WebExtractor()
+    result = extractor.extract(_SAMPLE_HTML, "https://example.com/article")
+    assert result is not None
+    assert result.url == "https://example.com/article"
+
+
+def test_extract_text_excludes_nav_and_footer():
+    extractor = WebExtractor()
+    result = extractor.extract(_SAMPLE_HTML, "https://example.com/article")
+    assert result is not None
+    assert "Site navigation" not in result.text
+    assert "Footer content" not in result.text

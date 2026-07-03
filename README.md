@@ -6,9 +6,13 @@ Built as an acquisition and normalisation layer on top of `blue-data-doc-source`
 
 ## Installation
 
+`blue-data-web-source` depends on `blue-data` and `blue-data-doc-source`, which are not yet on a public package index. Install them from their local paths first, in order — pip's resolver requires sequential installs here:
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate
+pip install -e /path/to/blue-data
+pip install -e /path/to/blue-data-doc-source
 pip install -e lib/
 ```
 
@@ -172,9 +176,15 @@ Both are imported from `blue-data-doc-source`.
 ## Running tests
 
 ```bash
-# Unit tests (no external services required)
+# Unit tests (no external services or network required)
 .venv/bin/pytest lib/tests/unit/ -v
 
 # Single file
 .venv/bin/pytest lib/tests/unit/test_pipeline.py -v
+
+# Integration tests (no network — HTTP mocked via pytest-httpx, trafilatura runs for real)
+.venv/bin/pytest lib/tests/integration/ -v -m integration
+
+# All tests
+.venv/bin/pytest lib/tests/ -v
 ```

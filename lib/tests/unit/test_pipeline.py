@@ -171,3 +171,97 @@ def test_ensure_index_calls_create_index():
         collection="web",
         dim=16,
     )
+
+
+def test_ingest_enricher_adds_entities():
+    pipeline = _make_pipeline()
+    pipeline._enricher = MagicMock()
+    pipeline._enricher.enrich.return_value = {
+        "entities": [{"text": "Python", "type": "PROPER_NOUN"}]
+    }
+
+    records = pipeline.ingest("https://example.com")
+    assert all("entities" in r for r in records)
+    assert records[0]["entities"] == [{"text": "Python", "type": "PROPER_NOUN"}]
+
+
+def test_ingest_no_entities_key_when_enricher_returns_empty():
+    pipeline = _make_pipeline()
+    pipeline._enricher = MagicMock()
+    pipeline._enricher.enrich.return_value = {"entities": []}
+
+    records = pipeline.ingest("https://example.com")
+    assert all("entities" not in r for r in records)
+
+
+def test_ingest_description_only_on_first_chunk():
+    pipeline = _make_pipeline()
+    pipeline._chunker = MagicMock()
+    pipeline._chunker.chunk_with_titles.return_value = [
+        (None, "First chunk text about the topic."),
+        (None, "Second chunk text with more details."),
+        (None, "Third chunk text with even more content."),
+    ]
+
+    records = pipeline.ingest("https://example.com")
+    assert len(records) == 3
+    assert records[0].get("description") == "A test page."
+    assert "description" not in records[1]
+    assert "description" not in records[2]
+
+
+def test_ingest_section_title_propagated():
+    pipeline = _make_pipeline()
+    pipeline._chunker = MagicMock()
+    pipeline._chunker.chunk_with_titles.return_value = [
+        ("Introduction", "First section text here."),
+        ("Methods", "Second section text here."),
+    ]
+
+    records = pipeline.ingest("https://example.com")
+    assert records[0]["section_title"] == "Introduction"
+    assert records[1]["section_title"] == "Methods"
+
+
+def test_ingest_no_section_title_key_when_none():
+    pipeline = _make_pipeline()
+    pipeline._chunker = MagicMock()
+    pipeline._chunker.chunk_with_titles.return_value = [
+        (None, "Chunk without a section title."),
+    ]
+
+    records = pipeline.ingest("https://example.com")
+    assert "section_title" not in records[0]
+
+
+def test_ingest_uses_final_url_not_original():
+    # chunk_id and url should be based on final_url after redirects
+    pipeline = _make_pipeline()
+    pipeline._fetcher.fetch.return_value = FetchResult(
+        url="https://original.example.com",
+        final_url="https://redirected.example.com",
+        html="<html></html>",
+        status_code=200,
+        content_type="text/html",
+    )
+    pipeline._extractor.extract.return_value = _make_extract_result(
+        url="https://redirected.example.com"
+    )
+
+    records = pipeline.ingest("https://original.example.com")
+    assert records[0]["url"] == "https://redirected.example.com"
+    assert records[0]["domain"] == "redirected.example.com"
+
+
+def test_ingest_chunk_ids_are_unique():
+    pipeline = _make_pipeline()
+    pipeline._chunker = MagicMock()
+    pipeline._chunker.chunk_with_titles.return_value = [
+        (None, "Chunk one text."),
+        (None, "Chunk two text."),
+        (None, "Chunk three text."),
+    ]
+
+    records = pipeline.ingest("https://example.com")
+    chunk_ids = [r["chunk_id"] for r in records]
+    assert len(chunk_ids) == len(set(chunk_ids))

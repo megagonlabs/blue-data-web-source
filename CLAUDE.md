@@ -7,8 +7,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 python -m venv .venv
 source .venv/bin/activate
+pip install -e /path/to/blue-data
+pip install -e /path/to/blue-data-doc-source
 pip install -e lib/
-pip install pytest
+pip install pytest pytest-httpx
 ```
 
 ## Tests
@@ -19,6 +21,9 @@ pip install pytest
 
 # Single file
 .venv/bin/pytest lib/tests/unit/test_pipeline.py -v
+
+# Integration tests (no network — uses pytest-httpx to mock HTTP, trafilatura runs for real)
+.venv/bin/pytest lib/tests/integration/ -v -m integration
 ```
 
 ## Running the example

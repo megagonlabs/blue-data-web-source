@@ -1,0 +1,14 @@
+pyproject.toml
+src/blue_data_web_source.egg-info/PKG-INFO
+src/blue_data_web_source.egg-info/SOURCES.txt
+src/blue_data_web_source.egg-info/dependency_links.txt
+src/blue_data_web_source.egg-info/requires.txt
+src/blue_data_web_source.egg-info/top_level.txt
+src/blue_web_source/__init__.py
+src/blue_web_source/source/__init__.py
+src/blue_web_source/source/web/__init__.py
+src/blue_web_source/source/web/extractor.py
+src/blue_web_source/source/web/fetcher.py
+src/blue_web_source/source/web/pipeline.py
+src/blue_web_source/source/web/record.py
+src/blue_web_source/source/web/web_source.py
