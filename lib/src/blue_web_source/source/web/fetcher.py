@@ -18,7 +18,7 @@ class FetchResult:
 
 
 class WebFetcher:
-    def __init__(self, timeout: float = 10.0, headers: dict | None = None):
+    def __init__(self, timeout: float = 30.0, headers: dict | None = None):
         self._timeout = timeout
         self._headers = {
             "User-Agent": _DEFAULT_USER_AGENT,

@@ -93,3 +93,50 @@ def test_extract_text_excludes_nav_and_footer():
     assert result is not None
     assert "Site navigation" not in result.text
     assert "Footer content" not in result.text
+
+
+# --- Nav fragment stripping ---
+
+_ARTICLE_WITH_NAV_FRAGMENTS = """<!DOCTYPE html>
+<html lang="en">
+<head><title>News Article</title></head>
+<body>
+  <article>
+    <p>Breaking news: something important happened today in the region.</p>
+    <p>Related Story: NPR</p>
+    <p>Officials confirmed the development on Monday morning.</p>
+    <p>Read more: Reuters</p>
+    <p>See also: BBC News</p>
+    <p>The investigation remains ongoing according to sources.</p>
+  </article>
+</body>
+</html>"""
+
+
+def test_extract_strips_related_story_lines():
+    extractor = WebExtractor()
+    result = extractor.extract(_ARTICLE_WITH_NAV_FRAGMENTS, "https://news.example.com/article")
+    assert result is not None
+    assert "Related Story" not in result.text
+
+
+def test_extract_strips_read_more_lines():
+    extractor = WebExtractor()
+    result = extractor.extract(_ARTICLE_WITH_NAV_FRAGMENTS, "https://news.example.com/article")
+    assert result is not None
+    assert "Read more" not in result.text
+
+
+def test_extract_strips_see_also_lines():
+    extractor = WebExtractor()
+    result = extractor.extract(_ARTICLE_WITH_NAV_FRAGMENTS, "https://news.example.com/article")
+    assert result is not None
+    assert "See also" not in result.text
+
+
+def test_extract_preserves_article_body_after_stripping():
+    extractor = WebExtractor()
+    result = extractor.extract(_ARTICLE_WITH_NAV_FRAGMENTS, "https://news.example.com/article")
+    assert result is not None
+    assert "important happened" in result.text or "Breaking news" in result.text
+    assert "investigation remains" in result.text or "ongoing" in result.text

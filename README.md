@@ -1,8 +1,26 @@
 # blue-data-web-source
 
-Web page ingestion, extraction, and retrieval pipeline for Blue Data Intelligence. Fetches URLs, strips boilerplate via trafilatura, chunks the main content, optionally enriches with entity extraction, embeds via OpenAI, and upserts to a Redis vector store.
+Turn any URL into searchable chunks in a vector store.
 
-Built as an acquisition and normalisation layer on top of `blue-data-doc-source` — it reuses the same chunkers, embedding models, and enrichers, adding HTTP fetch and HTML extraction as a front-end stage.
+## Use case
+
+You have a set of URLs — news articles, blog posts, documentation pages, research reports — and you want to search across their content semantically, or use them as context in an LLM (RAG pipeline). `blue-data-web-source` is the ingestion layer that handles everything between "I have a URL" and "I have searchable chunks in a vector store":
+
+1. **Fetch** the page (follows redirects, configurable timeout)
+2. **Extract** the main article body — strips ads, navigation, footers, and inline cross-reference noise via trafilatura
+3. **Chunk** the text into overlapping windows (section-aware by default)
+4. **Embed** each chunk (OpenAI `text-embedding-3-small` or bring your own)
+5. **Upsert** to a vector store (Redis by default, any `VectorSource` implementation works)
+6. **Search** with a natural language query — returns the k nearest chunks
+
+Re-ingesting the same URL overwrites rather than duplicates (URL-level deduplication via chunk ID hashing).
+
+**Typical callers:**
+- A news monitoring pipeline that ingests articles on a schedule and searches for topics
+- A research assistant that collects web pages and lets an LLM query across them
+- Any RAG application that needs web content alongside document/PDF sources
+
+`blue-data-web-source` is the web counterpart to `blue-data-doc-source` (PDF/TXT ingestion). It reuses the same chunkers, embedding models, and enrichers — only the fetch and HTML extraction stages are new.
 
 ## Installation
 
@@ -160,6 +178,8 @@ Chunkers are imported directly from `blue-data-doc-source`. `SectionChunker` is 
 
 `trafilatura` is used for both content extraction and metadata parsing. It removes navigation, ads, footers, and comments, keeping only the main article body. Pages with no extractable body return `None` from `WebExtractor.extract()` — the pipeline returns `[]` in this case rather than storing empty chunks.
 
+After trafilatura runs, `WebExtractor` applies a post-processing pass that strips inline navigation fragments that CMSes inject into article text — lines beginning with `Related Story:`, `Read more:`, `See also:`, `Also read:`, `Advertisement`, or `Story continues`. These are removed before text reaches the chunker.
+
 ### Embeddings
 
 | Class | Use case |
@@ -202,3 +222,17 @@ This is a Phase 1 implementation. It covers single-URL ingestion and vector sear
 # All tests
 .venv/bin/pytest lib/tests/ -v
 ```
+
+### Test structure
+
+| Layer | Location | What it tests |
+|---|---|---|
+| Unit | `lib/tests/unit/` | Each component in isolation — fetcher, extractor, pipeline, web source; all I/O mocked |
+| Integration | `lib/tests/integration/` | Full fetch → extract → chunk chain; only HTTP is mocked (via `pytest-httpx`), trafilatura runs for real |
+
+Integration tests use two kinds of fixtures:
+
+- **Synthetic HTML** — hand-crafted article HTML covering known extraction behaviour (title, author, boilerplate stripping, section chunking)
+- **Saved real HTML** — `data/fixtures/npr_article.html` is a real news article fetched once and committed to the repo; tests assert on exact title, date, domain, article keywords, and absence of nav fragments
+
+The saved fixture makes integration tests offline and deterministic — no network calls, no flakiness from site changes.

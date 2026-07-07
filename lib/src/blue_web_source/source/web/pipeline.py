@@ -34,7 +34,7 @@ class WebPipeline:
         vector_source: Optional[VectorSource] = None,
         enricher: Optional[Enricher] = None,
         collection: str = "web",
-        timeout: float = 10.0,
+        timeout: float = 30.0,
     ):
         self._fetcher = WebFetcher(timeout=timeout)
         self._extractor = WebExtractor()
@@ -43,8 +43,6 @@ class WebPipeline:
         self._vector_source = vector_source
         self._enricher = enricher
         self._collection = collection
-        self._chunk_size = chunk_size
-        self._overlap = overlap
 
     def ingest(self, url: str, collection: Optional[str] = None) -> List[Dict[str, Any]]:
         """Fetch, extract, chunk, and embed a URL.

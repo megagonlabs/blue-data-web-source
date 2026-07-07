@@ -1,9 +1,0 @@
-Metadata-Version: 2.4
-Name: blue-data-doc-source
-Version: 0.1.0
-Summary: Prototype document ingestion and retrieval source for Blue Data Intelligence
-Requires-Python: >=3.10
-Requires-Dist: blue-data @ file:../blue-data
-Requires-Dist: openai>=1.0.0
-Requires-Dist: pypdf>=4.0.0
-Requires-Dist: redis[hiredis]>=4.5.0

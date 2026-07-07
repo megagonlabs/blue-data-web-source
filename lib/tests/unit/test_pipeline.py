@@ -253,6 +253,11 @@ def test_ingest_uses_final_url_not_original():
     assert records[0]["domain"] == "redirected.example.com"
 
 
+def test_pipeline_default_timeout_is_30_seconds():
+    p = WebPipeline()
+    assert p._fetcher._timeout == 30.0
+
+
 def test_ingest_chunk_ids_are_unique():
     pipeline = _make_pipeline()
     pipeline._chunker = MagicMock()

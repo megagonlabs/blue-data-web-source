@@ -24,7 +24,16 @@ pip install pytest pytest-httpx
 
 # Integration tests (no network — uses pytest-httpx to mock HTTP, trafilatura runs for real)
 .venv/bin/pytest lib/tests/integration/ -v -m integration
+
+# All tests
+.venv/bin/pytest lib/tests/ -v
 ```
+
+Integration tests are split into:
+- **Synthetic tests** — hand-crafted HTML, cover title extraction, boilerplate stripping, deduplication, HTTP errors
+- **Fixture tests** — load `data/fixtures/npr_article.html` (a real saved article) and assert on exact title, date, domain, content keywords, and absence of nav fragments
+
+When adding a new fixture: fetch the page once with httpx, save the HTML under `data/fixtures/`, commit it, then write fixture-based tests against it using `pytest-httpx`.
 
 ## Running the example
 
@@ -66,13 +75,13 @@ optionally upserts to a vector store. Returns `[]` when the extractor yields no 
 `final_url` on `FetchResult` (after redirects) is used as the canonical URL for deduplication.
 
 **`WebExtractor`** wraps `trafilatura.extract()` and `trafilatura.extract_metadata()`.
-Returns `None` when trafilatura finds no extractable body — the pipeline returns `[]` in
-that case rather than storing empty chunks.
+After extraction it strips inline CMS navigation fragments (e.g. "Related Story:", "Read more:").
+Returns `None` when no extractable body remains — the pipeline returns `[]` in that case.
 
 **`VectorSource`** is blue-data's abstraction. The pipeline accepts any `VectorSource`
 implementation (e.g. `RedisVectorSource`) — no adapter layer needed.
 
-## Key design constraints
+## Key design constraints and behaviours
 
 - `chunk_id` is derived from `sha256(final_url)[:16]` — re-ingesting the same URL produces
   the same chunk IDs, so vector store upsert overwrites rather than duplicates.
@@ -87,3 +96,8 @@ implementation (e.g. `RedisVectorSource`) — no adapter layer needed.
   a vector store — the pipeline does not auto-create the index.
 - `trafilatura` is a hard dependency of this package (not optional). If it is not installed,
   importing `WebExtractor` raises `ImportError` with an install hint.
+- `WebExtractor` strips inline CMS navigation fragments after trafilatura extraction: lines
+  beginning with `Related Story:`, `Read more:`, `See also:`, `Also read:`, `Advertisement`,
+  or `Story continues` are removed. This prevents cross-reference noise from polluting chunks.
+- Default HTTP timeout is **30 seconds** (not 10) — necessary for real news sites with slow
+  SSL handshakes. Override via `WebPipeline(timeout=N)` or `WebFetcher(timeout=N)`.

@@ -8,9 +8,26 @@ fetch → extract → chunk chain without mocking any layer except HTTP transpor
 Run with:
     pytest lib/tests/integration/ -v -m integration
 """
+from pathlib import Path
+
 import pytest
 
 from blue_web_source.source.web.pipeline import WebPipeline
+
+# ---------------------------------------------------------------------------
+# Fixture helpers
+# ---------------------------------------------------------------------------
+
+_FIXTURES_DIR = Path(__file__).parent.parent.parent.parent / "data" / "fixtures"
+
+
+@pytest.fixture
+def npr_article_html() -> str:
+    return (_FIXTURES_DIR / "npr_article.html").read_text(encoding="utf-8")
+
+
+_NPR_URL = "https://text.npr.org/nx-s1-5884537"
+_NPR_TITLE = "China test-launches a ballistic missile in the South Pacific and raises regional concerns"
 
 
 _ARTICLE_HTML = """<!DOCTYPE html>
@@ -195,3 +212,100 @@ def test_full_pipeline_http_error_propagates(httpx_mock):
     pipeline = WebPipeline()
     with pytest.raises(Exception):
         pipeline.ingest("https://example.com/missing")
+
+
+# ---------------------------------------------------------------------------
+# Fixture-based tests: real saved HTML, deterministic, no network required
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_npr_fixture_produces_chunks(httpx_mock, npr_article_html):
+    httpx_mock.add_response(
+        url=_NPR_URL, text=npr_article_html, status_code=200,
+        headers={"content-type": "text/html; charset=utf-8"},
+    )
+    records = WebPipeline().ingest(_NPR_URL)
+    assert len(records) > 0
+    assert all(isinstance(r, dict) for r in records)
+
+
+@pytest.mark.integration
+def test_npr_fixture_title_extracted(httpx_mock, npr_article_html):
+    httpx_mock.add_response(
+        url=_NPR_URL, text=npr_article_html, status_code=200,
+        headers={"content-type": "text/html; charset=utf-8"},
+    )
+    records = WebPipeline().ingest(_NPR_URL)
+    assert records[0].get("title") == _NPR_TITLE
+
+
+@pytest.mark.integration
+def test_npr_fixture_date_extracted(httpx_mock, npr_article_html):
+    httpx_mock.add_response(
+        url=_NPR_URL, text=npr_article_html, status_code=200,
+        headers={"content-type": "text/html; charset=utf-8"},
+    )
+    records = WebPipeline().ingest(_NPR_URL)
+    assert records[0].get("date") == "2026-07-07"
+
+
+@pytest.mark.integration
+def test_npr_fixture_domain_correct(httpx_mock, npr_article_html):
+    httpx_mock.add_response(
+        url=_NPR_URL, text=npr_article_html, status_code=200,
+        headers={"content-type": "text/html; charset=utf-8"},
+    )
+    records = WebPipeline().ingest(_NPR_URL)
+    assert all(r["domain"] == "text.npr.org" for r in records)
+
+
+@pytest.mark.integration
+def test_npr_fixture_article_content_present(httpx_mock, npr_article_html):
+    httpx_mock.add_response(
+        url=_NPR_URL, text=npr_article_html, status_code=200,
+        headers={"content-type": "text/html; charset=utf-8"},
+    )
+    records = WebPipeline().ingest(_NPR_URL)
+    all_text = " ".join(r["text"] for r in records).lower()
+    assert "ballistic missile" in all_text
+    assert "south pacific" in all_text
+
+
+@pytest.mark.integration
+def test_npr_fixture_no_nav_fragments_in_chunks(httpx_mock, npr_article_html):
+    """Inline cross-reference lines must be stripped from chunk text."""
+    httpx_mock.add_response(
+        url=_NPR_URL, text=npr_article_html, status_code=200,
+        headers={"content-type": "text/html; charset=utf-8"},
+    )
+    records = WebPipeline().ingest(_NPR_URL)
+    all_text = " ".join(r["text"] for r in records)
+    assert "Related Story" not in all_text
+
+
+@pytest.mark.integration
+def test_npr_fixture_chunk_ids_stable_on_reingest(httpx_mock, npr_article_html):
+    """URL-level deduplication: re-ingesting the same URL must produce identical chunk IDs."""
+    for _ in range(2):
+        httpx_mock.add_response(
+            url=_NPR_URL, text=npr_article_html, status_code=200,
+            headers={"content-type": "text/html; charset=utf-8"},
+        )
+    pipeline = WebPipeline()
+    first = pipeline.ingest(_NPR_URL)
+    second = pipeline.ingest(_NPR_URL)
+    assert [r["chunk_id"] for r in first] == [r["chunk_id"] for r in second]
+
+
+@pytest.mark.integration
+def test_npr_fixture_description_on_first_chunk_only(httpx_mock, npr_article_html):
+    httpx_mock.add_response(
+        url=_NPR_URL, text=npr_article_html, status_code=200,
+        headers={"content-type": "text/html; charset=utf-8"},
+    )
+    pipeline = WebPipeline(chunk_size=60, overlap=10)
+    records = pipeline.ingest(_NPR_URL)
+    # Description may be absent (empty from metadata) but must never appear on chunk > 0
+    for r in records[1:]:
+        assert "description" not in r or r["description"] is None

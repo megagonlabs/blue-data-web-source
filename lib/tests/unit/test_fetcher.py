@@ -101,6 +101,21 @@ def test_fetch_final_url_reflects_redirect():
     assert result.final_url == "https://redirected.example.com"
 
 
+def test_fetch_default_timeout_is_30_seconds():
+    mock_resp = _mock_response("<html>ok</html>")
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.__enter__ = lambda s: mock_client
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.get.return_value = mock_resp
+        mock_client_cls.return_value = mock_client
+
+        fetcher = WebFetcher()  # no explicit timeout — should default to 30s
+        fetcher.fetch("https://example.com")
+
+        mock_client_cls.assert_called_once_with(timeout=30.0, follow_redirects=True)
+
+
 def test_fetch_configures_timeout():
     mock_resp = _mock_response("<html>ok</html>")
     with patch("httpx.Client") as mock_client_cls:
