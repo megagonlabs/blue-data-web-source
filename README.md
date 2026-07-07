@@ -173,6 +173,20 @@ Both are imported from `blue-data-doc-source`.
 
 `chunk_id` is derived from a SHA-256 hash of the final URL. Re-ingesting the same URL produces the same chunk IDs, so vector store upsert overwrites rather than duplicates.
 
+## Current scope
+
+This is a Phase 1 implementation. It covers single-URL ingestion and vector search. The following are **not yet built**:
+
+| Feature | Status |
+|---|---|
+| Single URL fetch → extract → chunk → embed → search | ✅ Done |
+| URL-level deduplication (same URL → same chunk IDs) | ✅ Done |
+| Content-level deduplication (same text from different URLs) | Not built |
+| Source quality / trust scoring per domain | Not built |
+| Sitemap crawling / whole-site ingestion | Not built |
+| Freshness tracking / re-ingest scheduling | Not built |
+| Entity resolution across sources | Not built |
+
 ## Running tests
 
 ```bash
