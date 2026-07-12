@@ -82,3 +82,8 @@ def test_unknown_op_raises():
     source = _make_source()
     with pytest.raises(ValueError, match="Unsupported op"):
         source.execute_query({"op": "WEB.UNKNOWN"})
+
+
+def test_web_data_source_default_timeout_is_30_seconds():
+    source = WebDataSource()
+    assert source._pipeline._fetcher._timeout == 30.0

@@ -42,7 +42,7 @@ class WebDataSource(DataSource):
         chunk_size: int = 1000,
         overlap: int = 150,
         default_collection: str = "web",
-        timeout: float = 10.0,
+        timeout: float = 30.0,
         properties: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(name, properties)
