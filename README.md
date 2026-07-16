@@ -219,6 +219,9 @@ This is a Phase 1 implementation. It covers single-URL ingestion and vector sear
 # Integration tests (no network — HTTP mocked via pytest-httpx, trafilatura runs for real)
 .venv/bin/pytest lib/tests/integration/ -v -m integration
 
+# End-to-end scenario tests (no network, no external services)
+.venv/bin/pytest lib/tests/e2e/ -v -m e2e
+
 # All tests
 .venv/bin/pytest lib/tests/ -v
 ```
@@ -229,6 +232,7 @@ This is a Phase 1 implementation. It covers single-URL ingestion and vector sear
 |---|---|---|
 | Unit | `lib/tests/unit/` | Each component in isolation — fetcher, extractor, pipeline, web source; all I/O mocked |
 | Integration | `lib/tests/integration/` | Full fetch → extract → chunk chain; only HTTP is mocked (via `pytest-httpx`), trafilatura runs for real |
+| E2E | `lib/tests/e2e/` | Full stack through `WebDataSource.execute_query` — all three ops in realistic scenarios; uses `MemoryVectorSource` and `DummyEmbeddingModel` |
 
 Integration tests use two kinds of fixtures:
 
@@ -236,3 +240,33 @@ Integration tests use two kinds of fixtures:
 - **Saved real HTML** — `data/fixtures/npr_article.html` is a real news article fetched once and committed to the repo; tests assert on exact title, date, domain, article keywords, and absence of nav fragments
 
 The saved fixture makes integration tests offline and deterministic — no network calls, no flakiness from site changes.
+
+### E2E scenarios
+
+E2E tests cover six scenario groups using `MemoryVectorSource` (in-process KNN, no Redis) and `DummyEmbeddingModel` (deterministic hash-based vectors, no API key):
+
+| Scenario | What is verified |
+|---|---|
+| Full ingest → search cycle | Results returned, expected fields present, correct domain, `k` limit respected |
+| Re-ingest deduplication | Same chunk IDs on second ingest; vector store does not grow |
+| Multi-article ingest | Total chunk count, both domains present in search results |
+| Collection isolation | Ingesting into collection A does not surface in searches against collection B |
+| Edge cases | Boilerplate-only page yields `[]`; HTTP 404 propagates; `WEB.ENSURE_INDEX` is idempotent; search before any ingest returns `[]` |
+| NPR fixture (real HTML) | Full cycle on a saved real article; title in results; no nav fragments in returned text |
+
+## Demo
+
+A self-contained demo that walks through the full pipeline — no network or external services required. HTTP is intercepted locally and served from fixture files.
+
+```bash
+python examples/demo.py
+```
+
+The demo:
+1. Sets up `WebDataSource` with `MemoryVectorSource` and `DummyEmbeddingModel`
+2. Creates a vector index
+3. Ingests two articles (a synthetic climate report and the saved NPR fixture)
+4. Prints a sample chunk from each article
+5. Runs two search queries and shows ranked results with metadata
+
+Note: `DummyEmbeddingModel` produces hash-based vectors with no semantic meaning, so search ranking in the demo is not semantically meaningful. Replace it with `OpenAIEmbeddingModel` (or any `EmbeddingModel` implementation) for real similarity search.
