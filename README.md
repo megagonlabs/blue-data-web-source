@@ -259,6 +259,7 @@ E2E tests cover six scenario groups using `MemoryVectorSource` (in-process KNN, 
 A self-contained demo that walks through the full pipeline — no network or external services required. HTTP is intercepted locally and served from fixture files.
 
 ```bash
+source .venv/bin/activate
 python examples/demo.py
 ```
 
