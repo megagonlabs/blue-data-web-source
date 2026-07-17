@@ -31,6 +31,7 @@ class WebDataSource(DataSource):
         )
         records = source.execute_query({"op": "WEB.INGEST", "url": "https://example.com"})
         results = source.execute_query({"op": "WEB.SEARCH", "query": "climate policy", "k": 5})
+        results = source.execute_query_nl("search for climate policy articles")
     """
 
     def __init__(
@@ -43,10 +44,13 @@ class WebDataSource(DataSource):
         overlap: int = 150,
         default_collection: str = "web",
         timeout: float = 30.0,
+        nl_model: str = "claude-opus-4-8",
         properties: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(name, properties)
         self._default_collection = default_collection
+        self._nl_model = nl_model
+        self._nl_parser = None
         self._pipeline = WebPipeline(
             chunk_size=chunk_size,
             overlap=overlap,
@@ -90,3 +94,19 @@ class WebDataSource(DataSource):
     def _ensure_index(self, request: Dict[str, Any], collection_override=None) -> None:
         collection = collection_override or request.get("collection")
         self._pipeline.ensure_index(collection=collection)
+
+    def execute_query_nl(self, text: str, collection=None):
+        """Parse *text* as a natural language query and execute it.
+
+        Uses Claude tool use to classify intent and extract parameters, then
+        dispatches to ``execute_query``. Requires the ``anthropic`` package::
+
+            pip install 'blue-data-web-source[nl]'
+
+        Override the Claude model via ``nl_model`` in the constructor.
+        """
+        from .nl import NLQueryParser
+        if self._nl_parser is None:
+            self._nl_parser = NLQueryParser(model=self._nl_model)
+        query = self._nl_parser.parse(text)
+        return self.execute_query(query, collection=collection)

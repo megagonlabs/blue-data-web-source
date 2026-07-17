@@ -16,6 +16,7 @@ dependencies = [
 [project.optional-dependencies]
 openai = ["openai>=1.0.0"]
 redis = ["redis[hiredis]>=4.5.0"]
+nl = ["anthropic>=0.40.0"]
 dev = ["pytest", "pytest-cov", "pytest-httpx"]
 
 [tool.setuptools.packages.find]
