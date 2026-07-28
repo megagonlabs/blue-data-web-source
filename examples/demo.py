@@ -18,7 +18,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from blue_data.source.vector.memory_vector_source import MemoryVectorSource
-from blue_doc_source.source.document.embeddings.dummy_embedding import DummyEmbeddingModel
+from blue_doc_source.source.document.embeddings.openai_embedding import OpenAIEmbeddingModel
 
 from blue_web_source import WebDataSource
 from blue_web_source.source.web.fetcher import FetchResult
@@ -155,7 +155,7 @@ def main() -> None:
     # ── Setup ──────────────────────────────────────────────────────────────
     _section("SETUP")
 
-    embedding_model = DummyEmbeddingModel(dim=16)
+    embedding_model = OpenAIEmbeddingModel()  # text-embedding-3-small, dim=1536
     vector_store = MemoryVectorSource()
     source = WebDataSource(
         name="demo",
@@ -168,7 +168,7 @@ def main() -> None:
     mock_fetcher = _build_mock_fetcher(url_map)
     source._pipeline._fetcher = mock_fetcher
 
-    _ok(f"EmbeddingModel  : DummyEmbeddingModel (dim={embedding_model.dim}, hash-based)")
+    _ok(f"EmbeddingModel  : OpenAIEmbeddingModel (text-embedding-3-small, dim={embedding_model.dim})")
     _ok(f"VectorStore     : MemoryVectorSource (in-process, no Redis needed)")
     _ok(f"WebDataSource   : ready  (collection='news')")
 
@@ -237,19 +237,41 @@ def main() -> None:
             _item("title    :", r.get("title", "—"))
             _item("text     :", _excerpt(r.get("text", ""), 160))
 
+    # ── Step 5: Natural language queries ──────────────────────
+    _section("STEP 5  —  Natural language queries (Claude tool use)")
+
+    _nl_questions = [
+        "What did scientists say about global warming targets?",
+        "Find news about China's missile test in the Pacific",
+    ]
+
+    for question in _nl_questions:
+        print(f"\n  Q: \"{question}\"")
+        print(f"  {'─' * (W - 2)}")
+        results = source.execute_query_nl(question, collection="news")
+        if not results:
+            print("  (no results)")
+            continue
+        for rank, r in enumerate(results, 1):
+            score = r.get("score", "?")
+            score_str = f"{score:.4f}" if isinstance(score, float) else str(score)
+            print(f"\n  Result {rank}  (cosine distance: {score_str})")
+            _item("url      :", r.get("url", "—"))
+            _item("title    :", r.get("title", "—"))
+            _item("text     :", _excerpt(r.get("text", ""), 160))
+
     # ── Summary ───────────────────────────────────────────────────────────
     _section("SUMMARY")
 
     stats = vector_store.fetch_source_stats()
     _ok(f"Articles ingested : {len(seen_urls)}")
     _ok(f"Chunks stored     : {stats['total_docs']}")
-    _ok(f"Searches run      : {len(_QUERIES)}")
+    _ok(f"Searches run      : {len(_QUERIES)} structured + {len(_nl_questions)} natural language")
     _ok(f"Vector store      : MemoryVectorSource (in-process, no external services)")
 
     print()
-    print("  Note: DummyEmbeddingModel produces hash-based vectors with no semantic")
-    print("        meaning. For production, replace with OpenAIEmbeddingModel or")
-    print("        similar. The pipeline, chunking, and storage are fully real.")
+    print("  Note: OpenAIEmbeddingModel produces real semantic vectors — search")
+    print("        results are ranked by genuine semantic similarity.")
     print()
     _hr("═")
     print()
