@@ -200,6 +200,56 @@ def test_e2e_reingest_does_not_grow_vector_store(httpx_mock):
 
 
 # ---------------------------------------------------------------------------
+# Scenario 3: Batch URL ingestion
+# ---------------------------------------------------------------------------
+
+@pytest.mark.e2e
+def test_e2e_batch_ingest_returns_all_chunks(httpx_mock, npr_html):
+    httpx_mock.add_response(
+        url=_CLIMATE_URL, text=_CLIMATE_HTML, status_code=200,
+        headers={"content-type": "text/html"},
+    )
+    httpx_mock.add_response(
+        url=_NPR_URL, text=npr_html, status_code=200,
+        headers={"content-type": "text/html"},
+    )
+    source = _make_source()
+    source.execute_query({"op": "WEB.ENSURE_INDEX"})
+
+    records = source.execute_query({"op": "WEB.INGEST", "urls": [_CLIMATE_URL, _NPR_URL]})
+
+    domains = {r["domain"] for r in records}
+    assert "climate.example.com" in domains
+    assert "text.npr.org" in domains
+
+
+@pytest.mark.e2e
+def test_e2e_batch_ingest_same_as_sequential(httpx_mock, npr_html):
+    for _ in range(2):
+        httpx_mock.add_response(
+            url=_CLIMATE_URL, text=_CLIMATE_HTML, status_code=200,
+            headers={"content-type": "text/html"},
+        )
+        httpx_mock.add_response(
+            url=_NPR_URL, text=npr_html, status_code=200,
+            headers={"content-type": "text/html"},
+        )
+    source = _make_source()
+    source.execute_query({"op": "WEB.ENSURE_INDEX"})
+
+    batch = source.execute_query({"op": "WEB.INGEST", "urls": [_CLIMATE_URL, _NPR_URL]})
+
+    source2 = _make_source()
+    source2.execute_query({"op": "WEB.ENSURE_INDEX"})
+    sequential = (
+        source2.execute_query({"op": "WEB.INGEST", "url": _CLIMATE_URL})
+        + source2.execute_query({"op": "WEB.INGEST", "url": _NPR_URL})
+    )
+
+    assert [r["chunk_id"] for r in batch] == [r["chunk_id"] for r in sequential]
+
+
+# ---------------------------------------------------------------------------
 # Scenario 3: Multi-article ingest and search
 # ---------------------------------------------------------------------------
 

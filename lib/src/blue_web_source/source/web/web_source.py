@@ -18,7 +18,7 @@ class WebDataSource(DataSource):
 
     Supported ops:
 
-    - ``WEB.INGEST`` — fetch, extract, chunk, embed, and upsert a URL
+    - ``WEB.INGEST`` — fetch, extract, chunk, embed, and upsert one URL (``url``) or multiple (``urls``)
     - ``WEB.SEARCH`` — embed a query and return matching chunks via KNN
     - ``WEB.ENSURE_INDEX`` — create the vector index for a collection
 
@@ -78,10 +78,15 @@ class WebDataSource(DataSource):
 
     def _ingest(self, request: Dict[str, Any], collection_override=None) -> List[Dict[str, Any]]:
         url = request.get("url")
-        if not url:
-            raise ValueError("WEB.INGEST requires a 'url' field")
+        urls = request.get("urls")
+        if not url and not urls:
+            raise ValueError("WEB.INGEST requires a 'url' or 'urls' field")
         collection = collection_override or request.get("collection")
-        return self._pipeline.ingest(url, collection=collection)
+        targets = [url] if url else urls
+        results: List[Dict[str, Any]] = []
+        for u in targets:
+            results.extend(self._pipeline.ingest(u, collection=collection))
+        return results
 
     def _search(self, request: Dict[str, Any], collection_override=None) -> List[Dict[str, Any]]:
         query_text = request.get("query")
