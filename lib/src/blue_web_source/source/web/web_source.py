@@ -19,6 +19,7 @@ class WebDataSource(DataSource):
     Supported ops:
 
     - ``WEB.INGEST`` — fetch, extract, chunk, embed, and upsert one URL (``url``) or multiple (``urls``)
+    - ``WEB.CRAWL`` — BFS crawl from a seed URL; configurable ``depth`` and ``max_pages``
     - ``WEB.SEARCH`` — embed a query and return matching chunks via KNN
     - ``WEB.ENSURE_INDEX`` — create the vector index for a collection
 
@@ -66,6 +67,8 @@ class WebDataSource(DataSource):
 
         if op == "WEB.INGEST":
             return self._ingest(query, collection)
+        elif op == "WEB.CRAWL":
+            return self._crawl(query, collection)
         elif op == "WEB.SEARCH":
             return self._search(query, collection)
         elif op == "WEB.ENSURE_INDEX":
@@ -73,7 +76,7 @@ class WebDataSource(DataSource):
         else:
             raise ValueError(
                 f"Unsupported op: {op!r}. "
-                "Expected WEB.INGEST, WEB.SEARCH, or WEB.ENSURE_INDEX"
+                "Expected WEB.INGEST, WEB.CRAWL, WEB.SEARCH, or WEB.ENSURE_INDEX"
             )
 
     def _ingest(self, request: Dict[str, Any], collection_override=None) -> List[Dict[str, Any]]:
@@ -95,6 +98,24 @@ class WebDataSource(DataSource):
         collection = collection_override or request.get("collection")
         k = request.get("k", 5)
         return self._pipeline.search(query_text, k=k, collection=collection)
+
+    def _crawl(self, request: Dict[str, Any], collection_override=None) -> List[Dict[str, Any]]:
+        from .crawler import WebCrawler
+        url = request.get("url")
+        if not url:
+            raise ValueError("WEB.CRAWL requires a 'url' field")
+        collection = collection_override or request.get("collection")
+        crawler = WebCrawler(
+            pipeline=self._pipeline,
+            fetcher=self._pipeline._fetcher,
+            same_domain_only=request.get("same_domain_only", True),
+        )
+        return crawler.crawl(
+            seed_url=url,
+            depth=request.get("depth", 1),
+            max_pages=request.get("max_pages", 10),
+            collection=collection,
+        )
 
     def _ensure_index(self, request: Dict[str, Any], collection_override=None) -> None:
         collection = collection_override or request.get("collection")

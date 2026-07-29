@@ -10,7 +10,7 @@ from blue_doc_source.source.document.embeddings import EmbeddingModel
 from blue_doc_source.source.document.enrichment import Enricher
 
 from .extractor import WebExtractor
-from .fetcher import WebFetcher
+from .fetcher import FetchResult, WebFetcher
 from .record import WebChunkRecord
 
 
@@ -44,12 +44,18 @@ class WebPipeline:
         self._enricher = enricher
         self._collection = collection
 
-    def ingest(self, url: str, collection: Optional[str] = None) -> List[Dict[str, Any]]:
+    def ingest(
+        self,
+        url: str,
+        collection: Optional[str] = None,
+        _fetch_result: Optional[FetchResult] = None,
+    ) -> List[Dict[str, Any]]:
         """Fetch, extract, chunk, and embed a URL.
 
         Args:
             url: Web page URL to ingest.
             collection: Override the instance-level collection for this call only.
+            _fetch_result: Pre-fetched result to skip the HTTP fetch (used by crawler).
 
         Returns:
             List of ``WebChunkRecord.to_dict()`` dicts, one per chunk.
@@ -57,7 +63,7 @@ class WebPipeline:
         """
         effective_collection = collection or self._collection
 
-        fetch_result = self._fetcher.fetch(url)
+        fetch_result = _fetch_result if _fetch_result is not None else self._fetcher.fetch(url)
         extract_result = self._extractor.extract(fetch_result.html, fetch_result.final_url)
         if extract_result is None or not extract_result.text.strip():
             return []
