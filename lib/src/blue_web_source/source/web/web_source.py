@@ -8,6 +8,7 @@ from blue_doc_source.source.document.embeddings import EmbeddingModel
 from blue_doc_source.source.document.enrichment import Enricher
 
 from .pipeline import WebPipeline
+from .search_provider import WebSearchProvider
 
 
 class WebDataSource(DataSource):
@@ -20,6 +21,7 @@ class WebDataSource(DataSource):
 
     - ``WEB.INGEST`` — fetch, extract, chunk, embed, and upsert one URL (``url``) or multiple (``urls``)
     - ``WEB.CRAWL`` — BFS crawl from a seed URL; configurable ``depth`` and ``max_pages``
+    - ``WEB.SEARCH_WEB`` — search the web, ingest top-k pages on the fly, return ranked chunks
     - ``WEB.SEARCH`` — embed a query and return matching chunks via KNN
     - ``WEB.ENSURE_INDEX`` — create the vector index for a collection
 
@@ -46,12 +48,14 @@ class WebDataSource(DataSource):
         default_collection: str = "web",
         timeout: float = 30.0,
         nl_model: str = "claude-opus-4-8",
+        search_provider: Optional[WebSearchProvider] = None,
         properties: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(name, properties)
         self._default_collection = default_collection
         self._nl_model = nl_model
         self._nl_parser = None
+        self._search_provider = search_provider
         self._pipeline = WebPipeline(
             chunk_size=chunk_size,
             overlap=overlap,
@@ -69,6 +73,8 @@ class WebDataSource(DataSource):
             return self._ingest(query, collection)
         elif op == "WEB.CRAWL":
             return self._crawl(query, collection)
+        elif op == "WEB.SEARCH_WEB":
+            return self._search_web(query, collection)
         elif op == "WEB.SEARCH":
             return self._search(query, collection)
         elif op == "WEB.ENSURE_INDEX":
@@ -76,7 +82,7 @@ class WebDataSource(DataSource):
         else:
             raise ValueError(
                 f"Unsupported op: {op!r}. "
-                "Expected WEB.INGEST, WEB.CRAWL, WEB.SEARCH, or WEB.ENSURE_INDEX"
+                "Expected WEB.INGEST, WEB.CRAWL, WEB.SEARCH_WEB, WEB.SEARCH, or WEB.ENSURE_INDEX"
             )
 
     def _ingest(self, request: Dict[str, Any], collection_override=None) -> List[Dict[str, Any]]:
@@ -116,6 +122,21 @@ class WebDataSource(DataSource):
             max_pages=request.get("max_pages", 10),
             collection=collection,
         )
+
+    def _search_web(self, request: Dict[str, Any], collection_override=None) -> List[Dict[str, Any]]:
+        query = request.get("query")
+        if not query:
+            raise ValueError("WEB.SEARCH_WEB requires a 'query' field")
+        if self._search_provider is None:
+            from .search_provider import TavilySearchProvider
+            self._search_provider = TavilySearchProvider()
+        collection = collection_override or request.get("collection")
+        k = request.get("k", 5)
+        top_k = request.get("top_k", k)
+        urls = self._search_provider.search(query, k=k)
+        for url in urls:
+            self._pipeline.ingest(url, collection=collection)
+        return self._pipeline.search(query, k=top_k, collection=collection)
 
     def _ensure_index(self, request: Dict[str, Any], collection_override=None) -> None:
         collection = collection_override or request.get("collection")
