@@ -83,7 +83,7 @@ source = WebDataSource(
 # Create the index before first ingest
 source.execute_query({"op": "WEB.ENSURE_INDEX", "collection": "web"})
 
-# Ingest a URL
+# Ingest a single URL
 records = source.execute_query({
     "op": "WEB.INGEST",
     "url": "https://example.com/article",
@@ -91,7 +91,42 @@ records = source.execute_query({
 })
 print(f"Ingested {len(records)} chunks")
 
-# Search
+# Ingest multiple URLs in one call
+records = source.execute_query({
+    "op": "WEB.INGEST",
+    "urls": [
+        "https://example.com/article-1",
+        "https://example.com/article-2",
+    ],
+    "collection": "web",
+})
+
+# Crawl a site (BFS from seed URL)
+records = source.execute_query({
+    "op": "WEB.CRAWL",
+    "url": "https://docs.example.com/",
+    "depth": 2,       # 0 = seed only, 1 = seed + its links, …
+    "max_pages": 20,  # hard cap on pages fetched
+    "collection": "web",
+})
+
+# Search the web on the fly and return semantically ranked chunks
+from blue_web_source.source.web.search_provider import TavilySearchProvider
+
+source_with_search = WebDataSource(
+    name="news",
+    embedding_model=OpenAIEmbeddingModel(),
+    vector_source=redis_source,
+    search_provider=TavilySearchProvider(),  # reads TAVILY_API_KEY from env
+)
+results = source_with_search.execute_query({
+    "op": "WEB.SEARCH_WEB",
+    "query": "latest greenhouse gas emission targets 2026",
+    "k": 5,      # pages to fetch from the search API
+    "top_k": 3,  # chunks to return after semantic ranking
+})
+
+# Search existing index
 results = source.execute_query({
     "op": "WEB.SEARCH",
     "query": "climate policy",
@@ -139,7 +174,7 @@ URL
   → web_source/   — WebDataSource extends blue-data DataSource; public entry point
 ```
 
-**`WebDataSource`** is the top-level public entry point. It extends blue-data's `DataSource` abstraction and dispatches on `op` codes: `WEB.INGEST`, `WEB.SEARCH`, `WEB.ENSURE_INDEX`. It owns a single `WebPipeline` instance reused across calls.
+**`WebDataSource`** is the top-level public entry point. It extends blue-data's `DataSource` abstraction and dispatches on `op` codes: `WEB.INGEST`, `WEB.CRAWL`, `WEB.SEARCH_WEB`, `WEB.SEARCH`, `WEB.ENSURE_INDEX`. It owns a single `WebPipeline` instance reused across calls.
 
 **`WebPipeline`** orchestrates the ingestion chain. `ingest(url)` fetches, extracts, chunks, embeds, and optionally upserts; it returns `List[Dict]`. `search(query)` embeds the query and delegates KNN to the injected `VectorSource`. `ensure_index(collection)` calls `VectorSource.create_index` with the correct embedding dim.
 
@@ -193,17 +228,44 @@ Both are imported from `blue-data-doc-source`.
 
 `chunk_id` is derived from a SHA-256 hash of the final URL. Re-ingesting the same URL produces the same chunk IDs, so vector store upsert overwrites rather than duplicates.
 
-## Current scope
+## Ops reference
 
-This is a Phase 1 implementation. It covers single-URL ingestion and vector search. The following are **not yet built**:
+| Op | Required fields | Optional fields | Returns |
+|---|---|---|---|
+| `WEB.ENSURE_INDEX` | — | `collection` | `None` |
+| `WEB.INGEST` | `url` or `urls` | `collection` | `List[Dict]` — all chunks |
+| `WEB.CRAWL` | `url` | `depth` (1), `max_pages` (10), `same_domain_only` (True), `collection` | `List[Dict]` — all chunks |
+| `WEB.SEARCH_WEB` | `query` | `k` (5 URLs to fetch), `top_k` (5 chunks to return), `collection` | `List[Dict]` — ranked chunks |
+| `WEB.SEARCH` | `query` | `k` (5), `collection` | `List[Dict]` — ranked chunks |
+
+### WEB.CRAWL behaviour
+
+- BFS traversal — processes pages level by level up to `depth` hops from the seed
+- `same_domain_only=True` (default) — only follows links within the seed URL's domain
+- Skips pages that fail to fetch (404, timeout, etc.) and continues
+- Deduplicates URLs including fragment stripping (`/page#section` → `/page`)
+- Reuses the fetched HTML for ingestion — no double fetch per page
+
+### WEB.SEARCH_WEB behaviour
+
+- Queries the configured `WebSearchProvider` (default: `TavilySearchProvider`) for top-`k` URLs
+- Ingests each URL through the full pipeline (fetch → extract → chunk → embed → upsert)
+- Runs semantic search over the freshly ingested content and returns `top_k` ranked chunks
+- Re-running the same query does not re-fetch already-ingested URLs (URL-hash deduplication)
+- Swap the search backend by passing any `WebSearchProvider` subclass to `WebDataSource`
+
+## Current scope
 
 | Feature | Status |
 |---|---|
-| Single URL fetch → extract → chunk → embed → search | ✅ Done |
+| Single URL ingestion (`WEB.INGEST url`) | ✅ Done |
+| Batch URL ingestion (`WEB.INGEST urls:[...]`) | ✅ Done |
+| BFS site crawling (`WEB.CRAWL`) | ✅ Done |
+| Web search → ingest → rank (`WEB.SEARCH_WEB`) | ✅ Done |
+| Natural language interface (`execute_query_nl`) | ✅ Done |
 | URL-level deduplication (same URL → same chunk IDs) | ✅ Done |
 | Content-level deduplication (same text from different URLs) | Not built |
 | Source quality / trust scoring per domain | Not built |
-| Sitemap crawling / whole-site ingestion | Not built |
 | Freshness tracking / re-ingest scheduling | Not built |
 | Entity resolution across sources | Not built |
 
@@ -256,18 +318,37 @@ E2E tests cover six scenario groups using `MemoryVectorSource` (in-process KNN, 
 
 ## Demo
 
-A self-contained demo that walks through the full pipeline — no network or external services required. HTTP is intercepted locally and served from fixture files.
+### Showcase demo (`examples/demo.py`)
+
+A formatted walkthrough of the full pipeline — no network or external services required. HTTP is intercepted and served from local fixture files.
 
 ```bash
-source .venv/bin/activate
 python examples/demo.py
 ```
 
-The demo:
-1. Sets up `WebDataSource` with `MemoryVectorSource` and `DummyEmbeddingModel`
-2. Creates a vector index
-3. Ingests two articles (a synthetic climate report and the saved NPR fixture)
-4. Prints a sample chunk from each article
-5. Runs two search queries and shows ranked results with metadata
+Walks through: setup → create index → ingest two articles → sample chunks → semantic search → natural language queries (requires `ANTHROPIC_API_KEY`).
 
-Note: `DummyEmbeddingModel` produces hash-based vectors with no semantic meaning, so search ranking in the demo is not semantically meaningful. Replace it with `OpenAIEmbeddingModel` (or any `EmbeddingModel` implementation) for real similarity search.
+### CLI demo (`examples/demo_web.py`)
+
+A minimal CLI that fetches real URLs and runs search or NL queries. Uses the local NPR fixture when no URL is supplied.
+
+```bash
+# Dummy embeddings, local fixture (no API keys needed)
+python examples/demo_web.py --query "what is the missile test about"
+
+# Real semantic search with OpenAI embeddings
+OPENAI_API_KEY=sk-... python examples/demo_web.py \
+    --embedding openai \
+    --query "what are greenhouse gas targets"
+
+# Natural language query (Claude parses intent, OpenAI embeds)
+OPENAI_API_KEY=sk-... ANTHROPIC_API_KEY=sk-ant-... python examples/demo_web.py \
+    --embedding openai \
+    --nl-query "find news about China's missile test"
+
+# Pass your own URL
+OPENAI_API_KEY=sk-... python examples/demo_web.py \
+    https://text.npr.org/nx-s1-5884537 \
+    --embedding openai \
+    --query "South Pacific missile launch"
+```
