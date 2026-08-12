@@ -1,6 +1,10 @@
 # blue-data-web-source
 
-Turn any URL into searchable chunks in a vector store.
+`blue-data-web-source` is a web ingestion and retrieval source for Blue Data Intelligence. It sits upstream of Blue's vector layer, converting live web pages into structured, provenance-aware chunk records that AI agents can search, cite, and reason over.
+
+It handles the full pipeline from URL to queryable vector index: fetching pages over HTTP, stripping boilerplate with trafilatura, detecting section structure, extracting entities and keywords, generating embeddings, and upserting into Blue's RedisVectorSource. It is built as an acquisition and normalisation layer on top of `blue-data-doc-source`, reusing the same chunkers, enrichers, and embedding models, and adding HTTP fetch and HTML extraction as a front-end stage. It plugs directly into Blue's `DataSource` abstraction, so web content becomes a first-class member of the same data layer as documents, SQL databases, and graph stores.
+
+It answers questions like: what does this page say, which section does it come from, when was it published, who wrote it, and how does it relate to a user's query.
 
 ## Use case
 
