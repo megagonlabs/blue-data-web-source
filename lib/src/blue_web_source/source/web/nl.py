@@ -60,6 +60,36 @@ class NLQueryParser:
                 },
             },
         },
+        {
+            "name": "search_web",
+            "description": (
+                "Search the live web for a query, fetch and ingest the top result pages "
+                "on the fly, and return semantically ranked chunks. Use this when the user "
+                "wants fresh information from the web rather than searching already-ingested content."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Natural language search query to send to the web search API.",
+                    },
+                    "k": {
+                        "type": "integer",
+                        "description": "Number of web pages to fetch and ingest (default 5).",
+                    },
+                    "top_k": {
+                        "type": "integer",
+                        "description": "Number of ranked chunks to return (default same as k).",
+                    },
+                    "collection": {
+                        "type": "string",
+                        "description": "Optional collection to store and search within.",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
     ]
 
     def __init__(self, model: str = "claude-opus-4-8", client=None):
@@ -119,6 +149,15 @@ class NLQueryParser:
             return op
         if tool_name == "ensure_index":
             op = {"op": "WEB.ENSURE_INDEX"}
+            if "collection" in args:
+                op["collection"] = args["collection"]
+            return op
+        if tool_name == "search_web":
+            op = {"op": "WEB.SEARCH_WEB", "query": args["query"]}
+            if "k" in args:
+                op["k"] = args["k"]
+            if "top_k" in args:
+                op["top_k"] = args["top_k"]
             if "collection" in args:
                 op["collection"] = args["collection"]
             return op

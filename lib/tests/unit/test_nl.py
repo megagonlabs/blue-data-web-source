@@ -74,6 +74,30 @@ class TestToOp:
             "collection": "news",
         }
 
+    def test_search_web_minimal(self):
+        p = NLQueryParser()
+        assert p._to_op("search_web", {"query": "climate news"}) == {
+            "op": "WEB.SEARCH_WEB",
+            "query": "climate news",
+        }
+
+    def test_search_web_with_k_and_top_k(self):
+        p = NLQueryParser()
+        assert p._to_op("search_web", {"query": "AI policy", "k": 10, "top_k": 3}) == {
+            "op": "WEB.SEARCH_WEB",
+            "query": "AI policy",
+            "k": 10,
+            "top_k": 3,
+        }
+
+    def test_search_web_with_collection(self):
+        p = NLQueryParser()
+        assert p._to_op("search_web", {"query": "elections", "collection": "news"}) == {
+            "op": "WEB.SEARCH_WEB",
+            "query": "elections",
+            "collection": "news",
+        }
+
     def test_unknown_tool_raises(self):
         p = NLQueryParser()
         with pytest.raises(ValueError, match="Unexpected tool"):
@@ -218,6 +242,23 @@ def test_execute_query_nl_creates_parser_lazily():
 
     source.execute_query_nl("create index")
     assert source._nl_parser is mock_parser
+
+
+def test_execute_query_nl_dispatches_search_web():
+    source = _make_source()
+    source._pipeline.ingest.return_value = []
+    source._pipeline.search.return_value = [{"text": "live result"}]
+    source._search_provider = MagicMock()
+    source._search_provider.search.return_value = []
+
+    mock_parser = MagicMock()
+    mock_parser.parse.return_value = {"op": "WEB.SEARCH_WEB", "query": "latest climate news", "k": 3}
+    source._nl_parser = mock_parser
+
+    result = source.execute_query_nl("find me the latest climate news")
+
+    mock_parser.parse.assert_called_once_with("find me the latest climate news")
+    source._search_provider.search.assert_called_once_with("latest climate news", k=3)
 
 
 def test_execute_query_nl_reuses_parser_across_calls():
