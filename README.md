@@ -19,7 +19,7 @@ Its core capabilities include:
 - **Search-augmented ingestion** — `WEB.SEARCH_WEB` calls a search API (Tavily by default), ingests result pages on the fly, returns semantically ranked chunks; backend pluggable via `WebSearchProvider` ABC
 - **Natural language interface** — `execute_query_nl` maps plain-English instructions to `WEB.*` ops using Claude tool use; requires `ANTHROPIC_API_KEY`
 
-→ **[Full feature list](docs/features.md)** · **[Examples](examples/README.md)**
+→ **[Full feature list](docs/features.md)** · **[Architecture](docs/architecture.md)** · **[Extraction](docs/extraction.md)** · **[Crawling](docs/crawling.md)** · **[MCP server](docs/mcp.md)** · **[Examples](examples/README.md)**
 
 ## Use case
 
