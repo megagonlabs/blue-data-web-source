@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from blue_web_source.source.web.fetcher import FetchResult, WebFetcher
+from blue_data_web_source.source.web.fetcher import FetchResult, WebFetcher
 
 
 def _mock_response(text: str, url: str = "https://example.com", status: int = 200) -> MagicMock:

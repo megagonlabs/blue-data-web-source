@@ -15,11 +15,11 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from blue_data.source.vector.memory_vector_source import MemoryVectorSource
-from blue_doc_source.source.document.embeddings.dummy_embedding import DummyEmbeddingModel
-from blue_doc_source.source.document.embeddings.openai_embedding import OpenAIEmbeddingModel
+from blue_data_doc_source.source.document.embeddings.dummy_embedding import DummyEmbeddingModel
+from blue_data_doc_source.source.document.embeddings.openai_embedding import OpenAIEmbeddingModel
 
-from blue_web_source import WebDataSource
-from blue_web_source.source.web.fetcher import FetchResult
+from blue_data_web_source import WebDataSource
+from blue_data_web_source.source.web.fetcher import FetchResult
 
 _FIXTURES_DIR = Path(__file__).parent.parent / "data" / "fixtures"
 _NPR_URL = "https://text.npr.org/nx-s1-5884537"

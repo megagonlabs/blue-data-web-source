@@ -32,8 +32,8 @@ except ImportError:
     sys.exit(1)
 
 from blue_data.source.vector.memory_vector_source import MemoryVectorSource
-from blue_doc_source.source.document.embeddings.openai_embedding import OpenAIEmbeddingModel
-from blue_web_source import WebDataSource
+from blue_data_doc_source.source.document.embeddings.openai_embedding import OpenAIEmbeddingModel
+from blue_data_web_source import WebDataSource
 from mock_fetcher import (
     CLIMATE_HTML, CLIMATE_URL, NPR_URL, POLICY_HTML, POLICY_URL,
     build_mock_fetcher, load_npr_html,

@@ -4,8 +4,8 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from blue_web_source.source.web.crawler import WebCrawler
-from blue_web_source.source.web.fetcher import FetchResult
+from blue_data_web_source.source.web.crawler import WebCrawler
+from blue_data_web_source.source.web.fetcher import FetchResult
 
 _BASE = "https://example.com"
 
@@ -223,7 +223,7 @@ def test_crawl_skips_url_disallowed_by_robots():
     fetcher = _make_fetcher({_BASE + "/": _INDEX_HTML})
     pipeline = _make_pipeline()
 
-    with patch("blue_web_source.source.web.crawler.RobotFileParser") as mock_rfp:
+    with patch("blue_data_web_source.source.web.crawler.RobotFileParser") as mock_rfp:
         mock_rfp.return_value = _mock_robots(allowed=False)
         crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
                              respect_robots=True, crawl_delay=0, max_retries=0)
@@ -236,7 +236,7 @@ def test_crawl_allows_url_permitted_by_robots():
     fetcher = _make_fetcher({_BASE + "/": _INDEX_HTML})
     pipeline = _make_pipeline()
 
-    with patch("blue_web_source.source.web.crawler.RobotFileParser") as mock_rfp:
+    with patch("blue_data_web_source.source.web.crawler.RobotFileParser") as mock_rfp:
         mock_rfp.return_value = _mock_robots(allowed=True)
         crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
                              respect_robots=True, crawl_delay=0, max_retries=0)
@@ -249,7 +249,7 @@ def test_crawl_allows_all_when_robots_unreachable():
     fetcher = _make_fetcher({_BASE + "/": _INDEX_HTML})
     pipeline = _make_pipeline()
 
-    with patch("blue_web_source.source.web.crawler.RobotFileParser") as mock_rfp:
+    with patch("blue_data_web_source.source.web.crawler.RobotFileParser") as mock_rfp:
         rp = MagicMock()
         rp.read.side_effect = OSError("network error")
         mock_rfp.return_value = rp
@@ -268,7 +268,7 @@ def test_crawl_caches_robots_per_domain():
     fetcher = _make_fetcher(url_map)
     pipeline = _make_pipeline()
 
-    with patch("blue_web_source.source.web.crawler.RobotFileParser") as mock_rfp:
+    with patch("blue_data_web_source.source.web.crawler.RobotFileParser") as mock_rfp:
         mock_rfp.return_value = _mock_robots(allowed=True)
         crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
                              respect_robots=True, crawl_delay=0, max_retries=0)
@@ -282,7 +282,7 @@ def test_crawl_respect_robots_false_skips_robots_check():
     fetcher = _make_fetcher({_BASE + "/": _INDEX_HTML})
     pipeline = _make_pipeline()
 
-    with patch("blue_web_source.source.web.crawler.RobotFileParser") as mock_rfp:
+    with patch("blue_data_web_source.source.web.crawler.RobotFileParser") as mock_rfp:
         crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
                              respect_robots=False, crawl_delay=0, max_retries=0)
         crawler.crawl(_BASE + "/", depth=0, max_pages=10)
@@ -296,9 +296,9 @@ def test_crawl_honours_robots_crawl_delay():
     pipeline = _make_pipeline()
 
     sleep_calls = []
-    with patch("blue_web_source.source.web.crawler.RobotFileParser") as mock_rfp, \
-         patch("blue_web_source.source.web.crawler.time.sleep", side_effect=sleep_calls.append), \
-         patch("blue_web_source.source.web.crawler.time.monotonic", return_value=0.0):
+    with patch("blue_data_web_source.source.web.crawler.RobotFileParser") as mock_rfp, \
+         patch("blue_data_web_source.source.web.crawler.time.sleep", side_effect=sleep_calls.append), \
+         patch("blue_data_web_source.source.web.crawler.time.monotonic", return_value=0.0):
         # robots.txt says Crawl-delay: 5; our default is 1.0 — should use 5
         mock_rfp.return_value = _mock_robots(allowed=True, crawl_delay=5.0)
         crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
@@ -321,8 +321,8 @@ def test_crawl_delay_applied_between_same_domain_requests():
     pipeline = _make_pipeline()
 
     sleep_calls = []
-    with patch("blue_web_source.source.web.crawler.time.sleep", side_effect=sleep_calls.append), \
-         patch("blue_web_source.source.web.crawler.time.monotonic", return_value=0.0):
+    with patch("blue_data_web_source.source.web.crawler.time.sleep", side_effect=sleep_calls.append), \
+         patch("blue_data_web_source.source.web.crawler.time.monotonic", return_value=0.0):
         crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
                              respect_robots=False, crawl_delay=2.0, max_retries=0)
         crawler.crawl(_BASE + "/", depth=1, max_pages=10)
@@ -341,7 +341,7 @@ def test_no_delay_when_crawl_delay_zero():
     pipeline = _make_pipeline()
 
     sleep_calls = []
-    with patch("blue_web_source.source.web.crawler.time.sleep", side_effect=sleep_calls.append):
+    with patch("blue_data_web_source.source.web.crawler.time.sleep", side_effect=sleep_calls.append):
         crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
                              respect_robots=False, crawl_delay=0, max_retries=0)
         crawler.crawl(_BASE + "/", depth=1, max_pages=10)
@@ -373,7 +373,7 @@ def test_crawl_retries_on_5xx_and_succeeds():
     fetcher.fetch.side_effect = _fetch
     pipeline = _make_pipeline()
 
-    with patch("blue_web_source.source.web.crawler.time.sleep"):
+    with patch("blue_data_web_source.source.web.crawler.time.sleep"):
         crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
                              respect_robots=False, crawl_delay=0, max_retries=2)
         crawler.crawl(_BASE + "/", depth=0, max_pages=10)
@@ -387,7 +387,7 @@ def test_crawl_gives_up_after_max_retries():
     fetcher.fetch.side_effect = _http_status_error(503)
     pipeline = _make_pipeline()
 
-    with patch("blue_web_source.source.web.crawler.time.sleep"):
+    with patch("blue_data_web_source.source.web.crawler.time.sleep"):
         crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
                              respect_robots=False, crawl_delay=0, max_retries=2)
         crawler.crawl(_BASE + "/", depth=0, max_pages=10)
@@ -401,7 +401,7 @@ def test_crawl_does_not_retry_4xx():
     fetcher.fetch.side_effect = _http_status_error(404)
     pipeline = _make_pipeline()
 
-    with patch("blue_web_source.source.web.crawler.time.sleep") as mock_sleep:
+    with patch("blue_data_web_source.source.web.crawler.time.sleep") as mock_sleep:
         crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
                              respect_robots=False, crawl_delay=0, max_retries=2)
         crawler.crawl(_BASE + "/", depth=0, max_pages=10)
@@ -424,7 +424,7 @@ def test_crawl_retries_on_timeout():
     fetcher.fetch.side_effect = _fetch
     pipeline = _make_pipeline()
 
-    with patch("blue_web_source.source.web.crawler.time.sleep"):
+    with patch("blue_data_web_source.source.web.crawler.time.sleep"):
         crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
                              respect_robots=False, crawl_delay=0, max_retries=2)
         crawler.crawl(_BASE + "/", depth=0, max_pages=10)
@@ -439,7 +439,7 @@ def test_crawl_retry_uses_exponential_backoff():
     pipeline = _make_pipeline()
 
     sleep_calls = []
-    with patch("blue_web_source.source.web.crawler.time.sleep", side_effect=sleep_calls.append):
+    with patch("blue_data_web_source.source.web.crawler.time.sleep", side_effect=sleep_calls.append):
         crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
                              respect_robots=False, crawl_delay=0, max_retries=3)
         crawler.crawl(_BASE + "/", depth=0, max_pages=10)

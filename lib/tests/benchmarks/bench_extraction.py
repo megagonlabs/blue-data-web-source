@@ -71,7 +71,7 @@ def benchmark_extraction(
     n_runs: int = 5,
 ) -> ExtractionResult:
     """Run WebExtractor on all pages of a given type and measure throughput + quality."""
-    from blue_web_source.source.web.extractor import WebExtractor
+    from blue_data_web_source.source.web.extractor import WebExtractor
 
     extractor = WebExtractor()
     subset = [p for p in pages if p.page_type == page_type]
@@ -126,7 +126,7 @@ def benchmark_nav_fragment_removal(
 ) -> FragmentResult:
     """Measure the cost of the nav-fragment stripping pass on mixed-content pages."""
     import trafilatura
-    from blue_web_source.source.web.extractor import _strip_nav_fragments
+    from blue_data_web_source.source.web.extractor import _strip_nav_fragments
 
     mixed_pages = [p for p in pages if p.page_type == "article_mixed"]
     if not mixed_pages:

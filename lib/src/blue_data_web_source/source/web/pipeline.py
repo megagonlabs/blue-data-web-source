@@ -5,9 +5,9 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 from blue_data.source.vector.vector_source import VectorSource
-from blue_doc_source.source.document.chunkers import Chunker, SectionChunker
-from blue_doc_source.source.document.embeddings import EmbeddingModel
-from blue_doc_source.source.document.enrichment import Enricher
+from blue_data_doc_source.source.document.chunkers import Chunker, SectionChunker
+from blue_data_doc_source.source.document.embeddings import EmbeddingModel
+from blue_data_doc_source.source.document.enrichment import Enricher
 
 from .extractor import WebExtractor
 from .fetcher import FetchResult, WebFetcher

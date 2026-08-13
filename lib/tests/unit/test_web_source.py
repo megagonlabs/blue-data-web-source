@@ -2,7 +2,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from blue_web_source.source.web.web_source import WebDataSource
+from blue_data_web_source.source.web.web_source import WebDataSource
 
 
 def _make_source(**kwargs) -> WebDataSource:

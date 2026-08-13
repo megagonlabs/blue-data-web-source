@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from blue_web_source.source.web.fetcher import FetchResult
+from blue_data_web_source.source.web.fetcher import FetchResult
 
 _FIXTURES_DIR = Path(__file__).parent.parent / "data" / "fixtures"
 

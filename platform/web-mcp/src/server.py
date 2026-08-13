@@ -30,17 +30,17 @@ _source = None
 
 
 def _build_source():
-    from blue_doc_source.source.document.enrichment import BasicEnricher
-    from blue_web_source import WebDataSource
+    from blue_data_doc_source.source.document.enrichment import BasicEnricher
+    from blue_data_web_source import WebDataSource
 
     embedding_backend = os.getenv("BLUE_WEB_EMBEDDING", "dummy").lower()
     if embedding_backend == "openai":
-        from blue_doc_source.source.document.embeddings.openai_embedding import OpenAIEmbeddingModel
+        from blue_data_doc_source.source.document.embeddings.openai_embedding import OpenAIEmbeddingModel
         embedding_model = OpenAIEmbeddingModel(
             model=os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
         )
     else:
-        from blue_doc_source.source.document.embeddings.dummy_embedding import DummyEmbeddingModel
+        from blue_data_doc_source.source.document.embeddings.dummy_embedding import DummyEmbeddingModel
         embedding_model = DummyEmbeddingModel()
 
     vector_source = None

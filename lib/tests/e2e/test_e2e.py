@@ -18,9 +18,9 @@ from pathlib import Path
 import pytest
 
 from blue_data.source.vector.memory_vector_source import MemoryVectorSource
-from blue_doc_source.source.document.embeddings.dummy_embedding import DummyEmbeddingModel
+from blue_data_doc_source.source.document.embeddings.dummy_embedding import DummyEmbeddingModel
 
-from blue_web_source import WebDataSource
+from blue_data_web_source import WebDataSource
 
 # ---------------------------------------------------------------------------
 # Shared fixtures

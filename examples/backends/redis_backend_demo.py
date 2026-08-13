@@ -13,8 +13,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from blue_data.source.vector.redis.redis_vector_source import RedisVectorSource
-from blue_doc_source.source.document.embeddings.dummy_embedding import DummyEmbeddingModel
-from blue_web_source import WebDataSource
+from blue_data_doc_source.source.document.embeddings.dummy_embedding import DummyEmbeddingModel
+from blue_data_web_source import WebDataSource
 from mock_fetcher import (
     CLIMATE_HTML, CLIMATE_URL, NPR_URL, POLICY_HTML, POLICY_URL,
     build_mock_fetcher, load_npr_html,

@@ -4,8 +4,8 @@ from typing import Any, Dict, List, Optional
 
 from blue_data.source.source import DataSource
 from blue_data.source.vector.vector_source import VectorSource
-from blue_doc_source.source.document.embeddings import EmbeddingModel
-from blue_doc_source.source.document.enrichment import Enricher
+from blue_data_doc_source.source.document.embeddings import EmbeddingModel
+from blue_data_doc_source.source.document.enrichment import Enricher
 
 from .pipeline import WebPipeline
 from .search_provider import WebSearchProvider

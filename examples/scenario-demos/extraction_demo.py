@@ -9,7 +9,7 @@ Run:  python3 examples/scenario-demos/extraction_demo.py
 """
 from __future__ import annotations
 
-from blue_web_source.source.web.extractor import WebExtractor
+from blue_data_web_source.source.web.extractor import WebExtractor
 
 W = 68
 

@@ -11,7 +11,7 @@ import argparse
 import json
 import sys
 
-from blue_web_source import WebDataSource
+from blue_data_web_source import WebDataSource
 
 
 def main() -> None:

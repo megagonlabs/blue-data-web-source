@@ -4,10 +4,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from blue_data.source.vector.memory_vector_source import MemoryVectorSource
-from blue_doc_source.source.document.embeddings.dummy_embedding import DummyEmbeddingModel
+from blue_data_doc_source.source.document.embeddings.dummy_embedding import DummyEmbeddingModel
 
-from blue_web_source import WebDataSource
-from blue_web_source.source.web.search_provider import TavilySearchProvider, WebSearchProvider
+from blue_data_web_source import WebDataSource
+from blue_data_web_source.source.web.search_provider import TavilySearchProvider, WebSearchProvider
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +141,7 @@ def test_search_web_uses_tavily_by_default():
     source = _make_source(search_provider=None)
     assert source._search_provider is None
     source.execute_query({"op": "WEB.ENSURE_INDEX"})
-    with patch("blue_web_source.source.web.search_provider.TavilySearchProvider.search", return_value=[]):
+    with patch("blue_data_web_source.source.web.search_provider.TavilySearchProvider.search", return_value=[]):
         try:
             source.execute_query({"op": "WEB.SEARCH_WEB", "query": "test"})
         except Exception:

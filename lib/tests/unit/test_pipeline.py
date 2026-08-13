@@ -2,9 +2,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from blue_web_source.source.web.fetcher import FetchResult
-from blue_web_source.source.web.extractor import ExtractResult
-from blue_web_source.source.web.pipeline import WebPipeline
+from blue_data_web_source.source.web.fetcher import FetchResult
+from blue_data_web_source.source.web.extractor import ExtractResult
+from blue_data_web_source.source.web.pipeline import WebPipeline
 
 
 def _make_fetch_result(url: str = "https://example.com") -> FetchResult:

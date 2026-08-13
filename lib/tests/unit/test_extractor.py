@@ -1,6 +1,6 @@
 import pytest
 
-from blue_web_source.source.web.extractor import ExtractResult, WebExtractor
+from blue_data_web_source.source.web.extractor import ExtractResult, WebExtractor
 
 _SAMPLE_HTML = """<!DOCTYPE html>
 <html lang="en">

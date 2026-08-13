@@ -18,10 +18,10 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from blue_data.source.vector.memory_vector_source import MemoryVectorSource
-from blue_doc_source.source.document.embeddings.openai_embedding import OpenAIEmbeddingModel
+from blue_data_doc_source.source.document.embeddings.openai_embedding import OpenAIEmbeddingModel
 
-from blue_web_source import WebDataSource
-from blue_web_source.source.web.fetcher import FetchResult
+from blue_data_web_source import WebDataSource
+from blue_data_web_source.source.web.fetcher import FetchResult
 
 # ---------------------------------------------------------------------------
 # Article fixtures (served in place of live HTTP)

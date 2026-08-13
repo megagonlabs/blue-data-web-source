@@ -11,7 +11,7 @@ Run:  python3 examples/feature-demos/extractor_demo.py
 """
 from __future__ import annotations
 
-from blue_web_source.source.web.extractor import ExtractResult, WebExtractor
+from blue_data_web_source.source.web.extractor import ExtractResult, WebExtractor
 
 W = 68
 

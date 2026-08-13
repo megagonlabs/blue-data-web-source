@@ -23,10 +23,10 @@ import time
 from dataclasses import dataclass
 from typing import List, Optional
 
-from blue_doc_source.source.document.chunkers import SectionChunker
-from blue_doc_source.source.document.embeddings import DummyEmbeddingModel
-from blue_doc_source.source.document.enrichment import BasicEnricher
-from blue_web_source.source.web.extractor import WebExtractor
+from blue_data_doc_source.source.document.chunkers import SectionChunker
+from blue_data_doc_source.source.document.embeddings import DummyEmbeddingModel
+from blue_data_doc_source.source.document.enrichment import BasicEnricher
+from blue_data_web_source.source.web.extractor import WebExtractor
 
 sys.path.insert(0, os.path.dirname(__file__))
 from datasets import build_corpus, SMALL, MEDIUM, LARGE
@@ -198,7 +198,7 @@ if __name__ == "__main__":
     print(f"  Using structured page: {structured.name!r} ({structured.word_count:,} words)\n")
 
     print(f"── Chunk-size sweep  ({structured.word_count:,} content words, SectionChunker) ──")
-    from blue_web_source.source.web.extractor import WebExtractor
+    from blue_data_web_source.source.web.extractor import WebExtractor
     extractor = WebExtractor()
     extract_result = extractor.extract(structured.html, structured.url)
     sweep = benchmark_chunk_size_sweep(extract_result.text, n_runs=args.runs)

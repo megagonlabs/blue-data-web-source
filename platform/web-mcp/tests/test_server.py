@@ -298,7 +298,7 @@ def test_search_web_exception_returns_error():
 def test_build_source_uses_dummy_embedding_by_default(monkeypatch):
     monkeypatch.delenv("BLUE_WEB_EMBEDDING", raising=False)
     monkeypatch.delenv("BLUE_WEB_REDIS_HOST", raising=False)
-    from blue_doc_source.source.document.embeddings.dummy_embedding import DummyEmbeddingModel
+    from blue_data_doc_source.source.document.embeddings.dummy_embedding import DummyEmbeddingModel
     source = _server._build_source()
     assert isinstance(source._pipeline._embedding_model, DummyEmbeddingModel)
 

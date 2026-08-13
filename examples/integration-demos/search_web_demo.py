@@ -35,14 +35,14 @@ if not OPENAI_API_KEY and not USE_DUMMY:
     USE_DUMMY = True
 
 from blue_data.source.vector.memory_vector_source import MemoryVectorSource
-from blue_web_source import WebDataSource
-from blue_web_source.source.web.search_provider import TavilySearchProvider
+from blue_data_web_source import WebDataSource
+from blue_data_web_source.source.web.search_provider import TavilySearchProvider
 
 if USE_DUMMY:
-    from blue_doc_source.source.document.embeddings.dummy_embedding import DummyEmbeddingModel
+    from blue_data_doc_source.source.document.embeddings.dummy_embedding import DummyEmbeddingModel
     embedding_model = DummyEmbeddingModel()
 else:
-    from blue_doc_source.source.document.embeddings.openai_embedding import OpenAIEmbeddingModel
+    from blue_data_doc_source.source.document.embeddings.openai_embedding import OpenAIEmbeddingModel
     embedding_model = OpenAIEmbeddingModel(model="text-embedding-3-small")
 
 COLLECTION = "live_search"

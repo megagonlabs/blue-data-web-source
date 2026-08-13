@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from blue_web_source.source.web.pipeline import WebPipeline
+from blue_data_web_source.source.web.pipeline import WebPipeline
 
 # ---------------------------------------------------------------------------
 # Fixture helpers

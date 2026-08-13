@@ -186,7 +186,7 @@ def main() -> None:
         print("  Operates on pre-extracted text — excludes extraction cost.")
         print()
 
-        from blue_web_source.source.web.extractor import WebExtractor
+        from blue_data_web_source.source.web.extractor import WebExtractor
         ext = WebExtractor()
         extract_result = ext.extract(ref_page.html, ref_page.url)
         if extract_result:
