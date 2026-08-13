@@ -85,7 +85,7 @@ Reports time in milliseconds, percentage of total, and microseconds per chunk.
 ## Baseline results
 
 Reference run: MacBook Pro M-series, Python 3.12, medium corpus, 7 timed repetitions.
-Full raw output is in `lib/tests/benchmarks/baseline.txt`.
+Full raw output is in `baseline.txt`.
 
 ### Extraction throughput
 
