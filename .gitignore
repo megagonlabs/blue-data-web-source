@@ -15,6 +15,9 @@ build/
 .coverage
 htmlcov/
 
+# local files
+presentation.md
+
 # editors
 .DS_Store
 *.swp
