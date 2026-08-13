@@ -1,15 +1,13 @@
 # Benchmarks
 
-Reference benchmark run — medium corpus (50 pages), 7 timed repetitions (median reported).  
-Machine: MacBook Pro M-series. Python 3.12. Date: 2026-08-12.  
-Command: `python lib/tests/benchmarks/runner.py --size medium --runs 7`
+The benchmark suite measures throughput and behaviour of the web ingestion pipeline on synthetic HTML corpora. It covers four areas: extraction throughput, nav-fragment removal overhead, chunk-size sweep, and per-stage pipeline breakdown.
 
 ---
 
 ## Running the benchmarks
 
 ```bash
-# Default: medium corpus, 5 runs
+# Default: medium corpus (50 pages), 5 timed runs
 python lib/tests/benchmarks/runner.py
 
 # Larger corpus for stable extraction-rate numbers
@@ -19,137 +17,143 @@ python lib/tests/benchmarks/runner.py --size large --runs 7
 python lib/tests/benchmarks/runner.py --size medium --runs 7 --chunk-size 300 --overlap 60
 ```
 
-Benchmark files:
+**Options:**
 
-| File | What it measures |
-|---|---|
-| `lib/tests/benchmarks/datasets.py` | Synthetic HTML corpus generator (4 page types) |
-| `lib/tests/benchmarks/bench_extraction.py` | WebExtractor throughput, extraction rate, metadata coverage, nav-fragment removal |
-| `lib/tests/benchmarks/bench_pipeline.py` | Per-stage timing (extraction + chunking + enrichment + embedding) and chunk-size sweep |
-| `lib/tests/benchmarks/runner.py` | Unified entry point |
+| Flag | Default | Description |
+|---|---|---|
+| `--size` | `medium` | Corpus size: `small` (10 pages), `medium` (50 pages), `large` (200 pages) |
+| `--runs` | `5` | Timed repetitions per measurement. Median is reported. |
+| `--chunk-size` | `200` | Chunk size used for the sweep and stage breakdown |
+| `--overlap` | `40` | Overlap used for the sweep and stage breakdown |
+
+The runner does one untimed warm-up pass before timed runs to avoid first-call overhead from trafilatura model loading and regex compilation.
 
 ---
 
 ## Corpus
 
-The synthetic corpus has four page types at a fixed distribution:
+The suite generates a deterministic synthetic HTML corpus with four page types at a fixed distribution:
 
-| Page type | % of corpus | Description |
-|---|---|---|
-| `article_structured` | 40% | `<article>` with `<h2>` headers + full metadata (title, date, author) |
-| `article_unstructured` | 30% | Dense prose, no headers, title only in `<head>` |
-| `article_mixed` | 20% | Numbered sections + inline CMS nav fragments (`Related Story:`, `Read more:`, etc.) |
-| `no_content` | 10% | JS redirect + meta-refresh — `WebExtractor` returns `None` |
+| Type | Share | Structure | Description |
+|---|---|---|---|
+| `article_structured` | 40% | Rich | `<article>` with `<h2>` section headers + full metadata (title, date, author) in `<head>` |
+| `article_unstructured` | 30% | None | Dense prose in `<article>`, no headers, title only in `<head>` |
+| `article_mixed` | 20% | Light | Numbered sections + prose + inline CMS nav fragments (`Related Story:`, `Read more:`, etc.) |
+| `no_content` | 10% | — | JS redirect + meta-refresh — `WebExtractor` returns `None`; pipeline returns `[]` |
 
-Articles are ~500 words each. `SMALL`=10 pages, `MEDIUM`=50 pages, `LARGE`=200 pages.
+Articles are ~500 words each. The corpus is generated from a fixed seed so results are reproducible across machines. No external files or network access required.
 
 ---
 
-## Results
+## Benchmarks
 
 ### 1. Extraction throughput
 
-```
-  Page type               Pages  Content  Extract%     Pages/sec    Title%     Date%    Author%
-  ────────────────────────────────────────────────────────────────────────────────────────────
-  article_structured         20       20      100%         889.8      100%      100%       100%
-  article_unstructured       15       15      100%         243.8      100%        0%         0%
-  article_mixed              10       10      100%         699.4      100%      100%         0%
-  no_content                  5        0        0%       1,133.4        0%        0%         0%
-  ────────────────────────────────────────────────────────────────────────────────────────────
+Runs `WebExtractor` (trafilatura) on each page type independently. Reports:
 
-  Overall extraction rate: 90%  (45/50 pages yielded content)
-  Average throughput (content pages):   611.0 pages/sec
-```
+| Column | Description |
+|---|---|
+| Pages | Total pages of this type in the corpus |
+| Content | Pages where `extract()` returned non-`None` |
+| Extract% | Content pages as a fraction of total |
+| Pages/sec | Extraction throughput (median across runs) |
+| Title/Date/Author% | Metadata field coverage on content pages |
+
+`no_content` pages return `None` immediately — they are included to measure the short-circuit path.
 
 ### 2. Nav-fragment removal overhead
 
-```
-  Pages benchmarked:          10
-  Total nav fragments found:  23
-  Avg fragments per page:     2.3
-  Strip overhead:             0.00 ms total (< 1% at medium scale)
-```
+Compares raw trafilatura extraction time vs. extraction + stripping pass on mixed-content pages. The stripping pass removes lines matching the six CMS nav-fragment prefixes (`Related Story:`, `Read more:`, `See also:`, `Also read:`, `Advertisement`, `Story continues`). Reports total fragments found in raw extracted text and the extra time the stripping pass adds.
 
-At large scale (200 pages, 40 mixed pages): **8.6% overhead** of the extraction+strip pass. The stripping regex is O(lines) so its cost scales with page size, not corpus size.
+### 3. Chunk-size sweep
 
-### 3. Chunk-size sweep (SectionChunker, structured article, ~550 words)
-
-```
-  chunk_size  overlap  Chunks  Avg(wds)  Std(wds)  Throughput(Kwps)
-  ──────────────────────────────────────────────────────────────
-          50       10      15      46.3      12.4        18,864.1K
-         100       20       8      85.5      34.3        19,604.4K
-         200       40       4     170.5      59.0        20,655.7K
-         500      100       2     331.0     239.0        21,931.7K
-        1000      150       1     562.0       0.0        23,335.0K
-```
+Runs `SectionChunker` on pre-extracted text (from a structured article) across five `chunk_size` / `overlap` configurations (50→1000 words). Isolates chunker behaviour from extraction cost. Reports chunk count, average word count, and throughput.
 
 ### 4. Pipeline stage breakdown
 
+Times each stage of the pipeline independently on a single structured article page:
+
+- **Extraction (trafilatura)** — `WebExtractor.extract()` — the new stage exclusive to web-source
+- **Chunking** — `SectionChunker.chunk_with_titles()`
+- **Enrichment** — `BasicEnricher.enrich()` on each chunk
+- **Embedding** — `DummyEmbeddingModel.embed_text()` (SHA-256, no network) to isolate in-process cost
+
+Reports time in milliseconds, percentage of total, and microseconds per chunk.
+
+---
+
+## Baseline results
+
+Reference run: MacBook Pro M-series, Python 3.12, medium corpus, 7 timed repetitions.
+Full raw output is in `lib/tests/benchmarks/baseline.txt`.
+
+### Extraction throughput
+
 ```
-  Stage                        Time(ms)    % total      µs/chunk
-  ──────────────────────────────────────────────────────────────
-  Extraction (trafilatura)         1.13      63.0%         281.8
-  Chunking                         0.03       1.7%           7.5
-  Enrichment                       0.63      35.0%         156.6
-  Embedding (dummy)                0.00       0.3%           1.2
-  ──────────────────────────────────────────────────────────────
-  Total                            1.79     100.0%         447.1
+Page type               Pages  Content  Extract%     Pages/sec    Title%     Date%    Author%
+article_structured         20       20      100%         889.8      100%      100%       100%
+article_unstructured       15       15      100%         243.8      100%        0%         0%
+article_mixed              10       10      100%         699.4      100%      100%         0%
+no_content                  5        0        0%       1,133.4        0%        0%         0%
+
+Overall extraction rate: 90%  (45/50 pages yielded content)
+Average throughput (content pages): 611.0 pages/sec
+```
+
+### Nav-fragment removal (mixed pages)
+
+```
+Pages benchmarked:       10
+Total nav fragments:     23   (2.3 avg per page)
+Strip overhead:          0.00 ms  (~8% at large scale, 40 pages)
+```
+
+### Chunk-size sweep (SectionChunker, structured article, ~550 words)
+
+```
+chunk_size  overlap  Chunks  Avg(wds)  Std(wds)  Throughput(Kwps)
+        50       10      15      46.3      12.4        18,864.1K
+       100       20       8      85.5      34.3        19,604.4K
+       200       40       4     170.5      59.0        20,655.7K
+       500      100       2     331.0     239.0        21,931.7K
+      1000      150       1     562.0       0.0        23,335.0K
+```
+
+### Pipeline stage breakdown (structured article, ~550 words, chunk_size=200)
+
+```
+Stage                        Time(ms)    % total      µs/chunk
+Extraction (trafilatura)         1.13      63.0%         281.8
+Chunking                         0.03       1.7%           7.5
+Enrichment                       0.63      35.0%         156.6
+Embedding (dummy)                0.00       0.3%           1.2
+Total                            1.79     100.0%         447.1
 ```
 
 ---
 
 ## Key findings
 
-### 1. Extraction is the dominant stage
+**Extraction is the dominant stage.** Trafilatura consumes 63% of total in-process pipeline time at ~282 µs/chunk. This is the primary difference from blue-data-doc-source, where text parsing is near-zero cost and enrichment dominates (94%). Disabling `BasicEnricher` when entity data is not used roughly halves per-page pipeline cost; replacing trafilatura with a faster extractor would be the more impactful optimisation.
 
-Trafilatura HTML extraction consumes **63% of total pipeline time** (~282 µs/chunk). This is the primary bottleneck in blue-data-web-source and the key difference from blue-data-doc-source, where text parsing is near-zero cost.
+**Page structure strongly affects extraction speed.** Structured pages (clear `<h2>` headers, `<article>` tags) extract 3.6× faster than unstructured prose (889 vs 244 pages/sec). trafilatura resolves content regions faster when the HTML tree has clear semantic structure. No-content pages (JS redirects) return `None` fastest — trafilatura short-circuits when the body is empty.
 
-Enrichment (BasicEnricher regex) is the second stage at **35%** (~157 µs/chunk). Disabling the enricher when entity data is not needed roughly halves per-page pipeline cost.
+**Metadata coverage follows page structure.** Title is available on 100% of content pages — trafilatura reads `<title>` reliably. Date requires `article:published_time` in `<head>`; author requires `meta[name=author]`. In production, expect 60–90% title coverage and 30–60% date coverage depending on the site. Author coverage is typically below 20% on news and documentation sites.
 
-### 2. Page structure strongly affects extraction speed
+**Nav-fragment removal is effectively free at page scale.** The regex stripping pass adds negligible overhead on small batches. At large scale (40+ mixed pages per call) it contributes ~8% of extraction+strip time — still dominated by trafilatura.
 
-Structured pages (clear `<h2>` headers, article tags) are extracted **3.6× faster** than unstructured prose pages (889 vs 244 pages/sec). trafilatura resolves content regions faster when the HTML tree has clear semantic structure. No-content pages (JS redirects) return `None` fastest — trafilatura short-circuits when the body is empty.
+**Chunker throughput is unchanged from doc-source.** `SectionChunker` processes 18–23M words/sec on extracted text, identical to its performance on document text. The chunker sees plain text in both cases.
 
-### 3. Metadata coverage follows page structure
-
-| Field | Structured | Mixed | Unstructured |
-|---|---|---|---|
-| title | 100% | 100% | 100% |
-| date | 100% | 100% | 0% |
-| author | 100% | 0% | 0% |
-
-All three page types include `<title>` in `<head>`, so title coverage is 100% across all content pages. Date coverage requires `article:published_time` meta tag — present in structured and mixed but not unstructured pages. Author coverage requires `meta[name=author]` — only present in structured pages.
-
-In production, expect 60–90% title coverage and 30–60% date coverage depending on the site type. Author coverage is often below 20% on news and documentation sites.
-
-### 4. Nav-fragment removal is effectively free at page scale
-
-The stripping pass (regex over extracted text lines) adds negligible overhead at small scale. At large scale across many mixed pages it contributes ~8% of extraction+strip time — still dominated by trafilatura. The pass is always applied; there is no cost to enabling it.
-
-### 5. Chunker throughput is unchanged from doc-source
-
-SectionChunker processes 18–23M words/sec on extracted web text, identical to its performance in blue-data-doc-source. The chunker sees plain text in both cases — the extraction layer upstream has no effect on chunking speed.
-
-### 6. Embedding dominates at production scale
-
-`DummyEmbeddingModel` (SHA-256, no network) costs ~1 µs/chunk. A real OpenAI `text-embedding-3-small` call costs ~50–150ms per API call at typical batch sizes. At 5 chunks/page, embeddings will cost **~100–300× more** than the entire rest of the pipeline combined when using OpenAI. Batch API calls (`EmbeddingModel.embed_batch` if available) or a local embedding model eliminate this bottleneck.
+**Embedding dominates at production scale.** `DummyEmbeddingModel` (SHA-256) costs ~1 µs/chunk. Real `text-embedding-3-small` calls cost ~50–150 ms per API call — roughly 100–300× the entire in-process pipeline cost per page. Batch API calls or a local embedding model eliminate this bottleneck.
 
 ---
 
-## Comparison with blue-data-doc-source
+## Adding a new baseline
 
-| | blue-data-web-source | blue-data-doc-source |
-|---|---|---|
-| Dominant stage | Extraction / trafilatura (63%) | Enrichment / BasicEnricher (94%) |
-| Enrichment cost | 157 µs/chunk | 122 µs/chunk |
-| Parsing / extraction | 282 µs/chunk (trafilatura) | ~1 µs/chunk (text split) |
-| Chunking | 7.5 µs/chunk | 7.0 µs/chunk |
-| Embedding (dummy) | 1.2 µs/chunk | 1.1 µs/chunk |
+After a significant change — trafilatura version upgrade, enricher rewrite, Python version change — capture a new baseline:
 
-Web-source's extraction layer is fundamentally more expensive than doc-source's parser because trafilatura performs full HTML tree analysis and content classification. If extraction speed is critical, consider:
+```bash
+python lib/tests/benchmarks/runner.py --size medium --runs 7 > lib/tests/benchmarks/baseline.txt
+```
 
-- Processing pages in parallel (trafilatura releases the GIL for the HTML parse)
-- Skipping `extract_metadata()` when provenance fields are not needed (saves ~30% of extraction time)
-- Caching HTML locally and batch-extracting offline rather than at ingest time
+Add the machine spec, Python version, and date as a comment at the top so results are comparable across environments.
