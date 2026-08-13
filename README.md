@@ -2,9 +2,24 @@
 
 `blue-data-web-source` is a web ingestion and retrieval source for Blue Data Intelligence. It sits upstream of Blue's vector layer, converting live web pages into structured, provenance-aware chunk records that AI agents can search, cite, and reason over.
 
-It handles the full pipeline from URL to queryable vector index: fetching pages over HTTP, stripping boilerplate with trafilatura, detecting section structure, extracting entities and keywords, generating embeddings, and upserting into Blue's RedisVectorSource. It is built as an acquisition and normalisation layer on top of `blue-data-doc-source`, reusing the same chunkers, enrichers, and embedding models, and adding HTTP fetch and HTML extraction as a front-end stage. It plugs directly into Blue's `DataSource` abstraction, so web content becomes a first-class member of the same data layer as documents, SQL databases, and graph stores.
+It handles the full pipeline from URL to queryable vector index: fetching pages over HTTP, stripping boilerplate with trafilatura, detecting section structure, extracting entities and keywords, generating embeddings, and upserting into Blue's vector store. It is built as an acquisition layer on top of `blue-data-doc-source`, reusing the same chunkers, enrichers, and embedding models, and adding HTTP fetch and HTML extraction as the front-end stage. It plugs directly into Blue's `DataSource` abstraction, so web content becomes a first-class member of the same data layer as documents, SQL databases, and graph stores.
 
-It answers questions like: what does this page say, which section does it come from, when was it published, who wrote it, and how does it relate to a user's query.
+Its core capabilities include:
+
+- **Web ingestion pipeline** — fetch → extract → chunk → enrich → embed → upsert in a single `WEB.INGEST` call; handles redirects, errors, and empty pages automatically
+- **Boilerplate-aware extraction** — trafilatura identifies the main article body and strips ads, navigation, and inline CMS cross-reference noise
+- **Web-provenance records** — every chunk carries `url`, `domain`, `fetch_timestamp`; title, author, date, and language attached when found in page metadata
+- **URL-hash deduplication** — `chunk_id` derived from SHA-256 of the final URL after redirects; re-ingesting the same URL is a safe upsert, not a duplicate
+- **Section-aware chunking** — reuses `SectionChunker` from `blue-data-doc-source`; preserves `section_title` on every chunk; falls back to sliding-window when no headers found
+- **Regex enrichment** — `BasicEnricher` extracts named entities (DATE, EMAIL, MONEY, PERCENT, PROPER_NOUN) and semantic hints with no ML dependency
+- **Pluggable embeddings** — `OpenAIEmbeddingModel`, `DummyEmbeddingModel`, or any `EmbeddingModel` subclass
+- **Blue-data native** — extends `DataSource`, delegates storage and KNN entirely to Blue's `VectorSource`; works with `MemoryVectorSource`, `RedisVectorSource`, and any future backend
+- **Batch ingestion** — `WEB.INGEST` accepts a single `url` or a `urls` list; returns a flat chunk list across all URLs
+- **Crawling** — `WEB.CRAWL` BFS from a seed URL; configurable depth and max_pages; same-domain by default; skips failed pages; strips URL fragments before dedup
+- **Search-augmented ingestion** — `WEB.SEARCH_WEB` calls a search API (Tavily by default), ingests result pages on the fly, returns semantically ranked chunks; backend pluggable via `WebSearchProvider` ABC
+- **Natural language interface** — `execute_query_nl` maps plain-English instructions to `WEB.*` ops using Claude tool use; requires `ANTHROPIC_API_KEY`
+
+→ **[Full feature list](docs/features.md)** · **[Examples](examples/README.md)**
 
 ## Use case
 
