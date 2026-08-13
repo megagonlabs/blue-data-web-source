@@ -115,6 +115,9 @@ class WebDataSource(DataSource):
             pipeline=self._pipeline,
             fetcher=self._pipeline._fetcher,
             same_domain_only=request.get("same_domain_only", True),
+            respect_robots=request.get("respect_robots", True),
+            crawl_delay=request.get("crawl_delay", 1.0),
+            max_retries=request.get("max_retries", 2),
         )
         return crawler.crawl(
             seed_url=url,
