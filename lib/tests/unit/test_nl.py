@@ -1,5 +1,5 @@
 """Unit tests for NLQueryParser and WebDataSource.execute_query_nl."""
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -72,6 +72,30 @@ class TestToOp:
         assert p._to_op("ensure_index", {"collection": "news"}) == {
             "op": "WEB.ENSURE_INDEX",
             "collection": "news",
+        }
+
+    def test_crawl_minimal(self):
+        p = NLQueryParser()
+        assert p._to_op("crawl", {"url": "https://docs.example.com/"}) == {
+            "op": "WEB.CRAWL",
+            "url": "https://docs.example.com/",
+        }
+
+    def test_crawl_with_depth_and_max_pages(self):
+        p = NLQueryParser()
+        assert p._to_op("crawl", {"url": "https://docs.example.com/", "depth": 2, "max_pages": 20}) == {
+            "op": "WEB.CRAWL",
+            "url": "https://docs.example.com/",
+            "depth": 2,
+            "max_pages": 20,
+        }
+
+    def test_crawl_with_collection(self):
+        p = NLQueryParser()
+        assert p._to_op("crawl", {"url": "https://docs.example.com/", "collection": "docs"}) == {
+            "op": "WEB.CRAWL",
+            "url": "https://docs.example.com/",
+            "collection": "docs",
         }
 
     def test_search_web_minimal(self):
@@ -242,6 +266,28 @@ def test_execute_query_nl_creates_parser_lazily():
 
     source.execute_query_nl("create index")
     assert source._nl_parser is mock_parser
+
+
+def test_execute_query_nl_dispatches_crawl():
+    source = _make_source()
+
+    mock_parser = MagicMock()
+    mock_parser.parse.return_value = {
+        "op": "WEB.CRAWL",
+        "url": "https://docs.example.com/",
+        "depth": 2,
+    }
+    source._nl_parser = mock_parser
+    source._crawl = MagicMock(return_value=[{"chunk_id": "x"}])
+
+    result = source.execute_query_nl("crawl the docs site at docs.example.com")
+
+    mock_parser.parse.assert_called_once_with("crawl the docs site at docs.example.com")
+    source._crawl.assert_called_once()
+    request_arg = source._crawl.call_args.args[0]
+    assert request_arg["url"] == "https://docs.example.com/"
+    assert request_arg["depth"] == 2
+    assert result == [{"chunk_id": "x"}]
 
 
 def test_execute_query_nl_dispatches_search_web():

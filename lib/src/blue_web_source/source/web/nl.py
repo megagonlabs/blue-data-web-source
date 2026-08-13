@@ -61,6 +61,36 @@ class NLQueryParser:
             },
         },
         {
+            "name": "crawl",
+            "description": (
+                "Crawl a website starting from a seed URL and ingest all reachable pages. "
+                "Use this when the user wants to index an entire site, documentation, or "
+                "a section of a domain rather than a single page."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "Seed URL to start crawling from.",
+                    },
+                    "depth": {
+                        "type": "integer",
+                        "description": "How many link-hops to follow from the seed (default 1).",
+                    },
+                    "max_pages": {
+                        "type": "integer",
+                        "description": "Maximum number of pages to fetch (default 10).",
+                    },
+                    "collection": {
+                        "type": "string",
+                        "description": "Optional collection to store crawled content in.",
+                    },
+                },
+                "required": ["url"],
+            },
+        },
+        {
             "name": "search_web",
             "description": (
                 "Search the live web for a query, fetch and ingest the top result pages "
@@ -149,6 +179,15 @@ class NLQueryParser:
             return op
         if tool_name == "ensure_index":
             op = {"op": "WEB.ENSURE_INDEX"}
+            if "collection" in args:
+                op["collection"] = args["collection"]
+            return op
+        if tool_name == "crawl":
+            op = {"op": "WEB.CRAWL", "url": args["url"]}
+            if "depth" in args:
+                op["depth"] = args["depth"]
+            if "max_pages" in args:
+                op["max_pages"] = args["max_pages"]
             if "collection" in args:
                 op["collection"] = args["collection"]
             return op
