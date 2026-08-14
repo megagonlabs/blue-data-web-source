@@ -15,6 +15,9 @@ build/
 .coverage
 htmlcov/
 
+# Claude Code
+CLAUDE.md
+
 # local files
 presentation.md
 

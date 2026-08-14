@@ -19,7 +19,38 @@ Its core capabilities include:
 - **Search-augmented ingestion** — `WEB.SEARCH_WEB` calls a search API (Tavily by default), ingests result pages on the fly, returns semantically ranked chunks; backend pluggable via `WebSearchProvider` ABC
 - **Natural language interface** — `execute_query_nl` maps plain-English instructions to `WEB.*` ops using Claude tool use; requires `ANTHROPIC_API_KEY`
 
-→ **[Full feature list](docs/features.md)** · **[Architecture](docs/architecture.md)** · **[Extraction](docs/extraction.md)** · **[Crawling](docs/crawling.md)** · **[MCP server](docs/mcp.md)** · **[Examples](examples/README.md)**
+→ **[Full feature list](docs/features.md)** · **[Installation](#installation)** · **[Architecture](docs/architecture.md)** · **[Extraction](docs/extraction.md)** · **[Crawling](docs/crawling.md)** · **[MCP server](docs/mcp.md)** · **[Examples](examples/README.md)**
+
+## Repository layout
+
+```
+blue-data-web-source/
+├── lib/                              # Python library (blue-data-web-source)
+│   ├── src/blue_data_web_source/
+│   └── tests/
+├── platform/
+│   └── web-mcp/                      # MCP server for web operations
+├── docs/                             # Documentation
+├── data/
+│   └── fixtures/                     # Saved HTML fixtures for integration tests
+└── examples/                         # Runnable examples
+```
+
+## Requirements
+
+- Python 3.10+
+- [`blue-data`](../blue-data) (local dependency)
+- [`blue-data-doc-source`](../blue-data-doc-source) (local dependency — reuses chunkers, embeddings, enrichers)
+- Runtime: `httpx`, `trafilatura` — installed automatically via `pip install`
+- Optional: `[openai]` — OpenAI embedding models (`OpenAIEmbeddingModel`)
+- Optional: `[redis]` — Redis vector storage (`RedisVectorSource`)
+- Optional: `[nl]` — natural language query interface via Claude (`execute_query_nl`)
+
+```bash
+export OPENAI_API_KEY=sk-...        # for OpenAIEmbeddingModel
+export ANTHROPIC_API_KEY=sk-ant-... # for execute_query_nl
+export TAVILY_API_KEY=tvly-...      # for WEB.SEARCH_WEB (TavilySearchProvider)
+```
 
 ## Use case
 
@@ -66,7 +97,7 @@ pip install -e "lib/[openai,redis,dev]" # everything + dev/test tools
 Ingest a URL with no embeddings — useful for inspecting extracted chunks before wiring up a vector store:
 
 ```python
-from blue_web_source.source.web.pipeline import WebPipeline
+from blue_data_web_source.source.web.pipeline import WebPipeline
 
 pipeline = WebPipeline(chunk_size=500, overlap=100)
 records = pipeline.ingest("https://en.wikipedia.org/wiki/Python_(programming_language)")
@@ -82,9 +113,9 @@ Full pipeline: fetch → extract → chunk → enrich → embed → upsert to Re
 `blue-data-web-source` depends on both `blue-data` and `blue-data-doc-source`. Pass a `VectorSource` instance (e.g. `RedisVectorSource`) from blue-data as the `vector_source`.
 
 ```python
-from blue_web_source import WebDataSource
-from blue_doc_source.source.document.embeddings import OpenAIEmbeddingModel
-from blue_doc_source.source.document.enrichment import BasicEnricher
+from blue_data_web_source import WebDataSource
+from blue_data_doc_source.source.document.embeddings import OpenAIEmbeddingModel
+from blue_data_doc_source.source.document.enrichment import BasicEnricher
 from blue_data.source.vector.redis.redis_vector_source import RedisVectorSource
 
 redis_source = RedisVectorSource(name="my_redis", host="localhost", port=6379)
@@ -130,7 +161,7 @@ records = source.execute_query({
 })
 
 # Search the web on the fly and return semantically ranked chunks
-from blue_web_source.source.web.search_provider import TavilySearchProvider
+from blue_data_web_source.source.web.search_provider import TavilySearchProvider
 
 source_with_search = WebDataSource(
     name="news",
