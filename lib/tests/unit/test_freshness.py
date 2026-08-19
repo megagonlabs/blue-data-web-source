@@ -134,6 +134,79 @@ class TestFileFreshnessStore:
 
 
 # ---------------------------------------------------------------------------
+# get_by_content_hash — MemoryFreshnessStore
+# ---------------------------------------------------------------------------
+
+
+class TestMemoryFreshnessStoreHashLookup:
+    def test_returns_none_when_empty(self):
+        store = MemoryFreshnessStore()
+        assert store.get_by_content_hash("deadbeef") is None
+
+    def test_returns_record_after_set(self):
+        store = MemoryFreshnessStore()
+        store.set("web_abc123", _RECORD)
+        assert store.get_by_content_hash("deadbeef") == _RECORD
+
+    def test_returns_none_after_delete(self):
+        store = MemoryFreshnessStore()
+        store.set("web_abc123", _RECORD)
+        store.delete("web_abc123")
+        assert store.get_by_content_hash("deadbeef") is None
+
+    def test_updates_index_when_hash_changes(self):
+        store = MemoryFreshnessStore()
+        store.set("web_abc123", _RECORD)
+        updated = {**_RECORD, "content_hash": "cafebabe"}
+        store.set("web_abc123", updated)
+        assert store.get_by_content_hash("deadbeef") is None
+        assert store.get_by_content_hash("cafebabe") == updated
+
+    def test_record_without_content_hash_not_indexed(self):
+        store = MemoryFreshnessStore()
+        store.set("web_abc123", {"url": "https://example.com"})
+        assert store.get_by_content_hash("anything") is None
+
+
+# ---------------------------------------------------------------------------
+# get_by_content_hash — FileFreshnessStore
+# ---------------------------------------------------------------------------
+
+
+class TestFileFreshnessStoreHashLookup:
+    def test_returns_none_when_empty(self, tmp_path):
+        store = FileFreshnessStore(str(tmp_path / "f.json"))
+        assert store.get_by_content_hash("deadbeef") is None
+
+    def test_returns_record_after_set(self, tmp_path):
+        store = FileFreshnessStore(str(tmp_path / "f.json"))
+        store.set("web_abc123", _RECORD)
+        assert store.get_by_content_hash("deadbeef") == _RECORD
+
+    def test_returns_none_after_delete(self, tmp_path):
+        store = FileFreshnessStore(str(tmp_path / "f.json"))
+        store.set("web_abc123", _RECORD)
+        store.delete("web_abc123")
+        assert store.get_by_content_hash("deadbeef") is None
+
+    def test_index_rebuilt_on_load(self, tmp_path):
+        path = str(tmp_path / "f.json")
+        store1 = FileFreshnessStore(path)
+        store1.set("web_abc123", _RECORD)
+
+        store2 = FileFreshnessStore(path)
+        assert store2.get_by_content_hash("deadbeef") == _RECORD
+
+    def test_updates_index_when_hash_changes(self, tmp_path):
+        store = FileFreshnessStore(str(tmp_path / "f.json"))
+        store.set("web_abc123", _RECORD)
+        updated = {**_RECORD, "content_hash": "cafebabe"}
+        store.set("web_abc123", updated)
+        assert store.get_by_content_hash("deadbeef") is None
+        assert store.get_by_content_hash("cafebabe") == updated
+
+
+# ---------------------------------------------------------------------------
 # Thread-safety
 # ---------------------------------------------------------------------------
 

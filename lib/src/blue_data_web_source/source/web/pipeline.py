@@ -88,6 +88,11 @@ class WebPipeline:
                 })
                 return []
 
+            # Cross-URL dedup: skip if identical text already ingested from a different URL
+            existing = self._freshness_store.get_by_content_hash(content_hash)
+            if existing and existing.get("url") != fetch_result.final_url:
+                return []
+
         chunks = self._chunker.chunk_with_titles(extract_result.text)
         records = []
 

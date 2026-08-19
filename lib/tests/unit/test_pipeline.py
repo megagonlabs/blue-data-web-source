@@ -584,6 +584,67 @@ def test_ingest_many_respects_max_workers():
     assert len(results) > 0
 
 
+def test_cross_url_dedup_skips_duplicate_content():
+    store = MemoryFreshnessStore()
+    pipeline = _make_pipeline(freshness_store=store)
+
+    # Ingest URL A
+    pipeline._fetcher.fetch.return_value = _make_fetch_result("https://site-a.com/story")
+    pipeline._extractor.extract.return_value = _make_extract_result(url="https://site-a.com/story")
+    first = pipeline.ingest("https://site-a.com/story")
+    assert len(first) > 0
+
+    # Ingest URL B with identical extracted text
+    pipeline._fetcher.fetch.return_value = _make_fetch_result("https://site-b.com/story")
+    pipeline._extractor.extract.return_value = _make_extract_result(url="https://site-b.com/story")
+    second = pipeline.ingest("https://site-b.com/story")
+    assert second == []
+
+
+def test_cross_url_dedup_allows_unique_content():
+    store = MemoryFreshnessStore()
+    pipeline = _make_pipeline(freshness_store=store)
+
+    pipeline._fetcher.fetch.return_value = _make_fetch_result("https://site-a.com/story")
+    pipeline._extractor.extract.return_value = _make_extract_result(url="https://site-a.com/story")
+    pipeline.ingest("https://site-a.com/story")
+
+    pipeline._fetcher.fetch.return_value = _make_fetch_result("https://site-b.com/other")
+    pipeline._extractor.extract.return_value = _make_extract_result(
+        url="https://site-b.com/other",
+        text="Completely different article about another topic altogether. " * 30,
+    )
+    second = pipeline.ingest("https://site-b.com/other")
+    assert len(second) > 0
+
+
+def test_cross_url_dedup_inactive_without_freshness_store():
+    pipeline = _make_pipeline()  # no freshness_store
+
+    pipeline._fetcher.fetch.return_value = _make_fetch_result("https://site-a.com/story")
+    pipeline._extractor.extract.return_value = _make_extract_result(url="https://site-a.com/story")
+    pipeline.ingest("https://site-a.com/story")
+
+    pipeline._fetcher.fetch.return_value = _make_fetch_result("https://site-b.com/story")
+    pipeline._extractor.extract.return_value = _make_extract_result(url="https://site-b.com/story")
+    second = pipeline.ingest("https://site-b.com/story")
+    assert len(second) > 0
+
+
+def test_same_url_reingest_not_blocked_by_cross_url_dedup():
+    store = MemoryFreshnessStore()
+    pipeline = _make_pipeline(freshness_store=store)
+
+    pipeline._fetcher.fetch.return_value = _make_fetch_result("https://example.com")
+    pipeline._extractor.extract.return_value = _make_extract_result(url="https://example.com")
+    first = pipeline.ingest("https://example.com")
+    assert len(first) > 0
+
+    # Same URL, same content → handled by same-URL freshness check, not cross-URL dedup
+    second = pipeline.ingest("https://example.com")
+    assert second == []  # still skipped, just by the right path
+
+
 def test_ingest_many_single_url_behaves_like_ingest():
     pipeline = _make_pipeline()
     many = pipeline.ingest_many(["https://example.com"])
