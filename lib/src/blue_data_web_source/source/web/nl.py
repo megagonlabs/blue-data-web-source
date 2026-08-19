@@ -135,9 +135,13 @@ class NLQueryParser:
                         "type": "string",
                         "description": "The RSS or Atom feed URL.",
                     },
-                    "max_items": {
+                    "since": {
+                        "type": "string",
+                        "description": "ISO 8601 datetime (e.g. '2026-08-01T00:00:00Z'). Only ingest entries published at or after this time. Entries without a date are always included.",
+                    },
+                    "max_entries": {
                         "type": "integer",
-                        "description": "Maximum number of articles to ingest. Omit to ingest all.",
+                        "description": "Maximum number of articles to ingest after date filtering. Omit to ingest all.",
                     },
                     "collection": {
                         "type": "string",
@@ -229,8 +233,10 @@ class NLQueryParser:
             return op
         if tool_name == "ingest_feed":
             op = {"op": "WEB.INGEST_FEED", "url": args["url"]}
-            if "max_items" in args:
-                op["max_items"] = args["max_items"]
+            if "since" in args:
+                op["since"] = args["since"]
+            if "max_entries" in args:
+                op["max_entries"] = args["max_entries"]
             if "collection" in args:
                 op["collection"] = args["collection"]
             return op

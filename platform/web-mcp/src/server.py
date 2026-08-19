@@ -263,7 +263,8 @@ def search_web(
 @mcp.tool()
 def ingest_feed(
     url: str,
-    max_items: Optional[int] = None,
+    since: Optional[str] = None,
+    max_entries: Optional[int] = None,
     collection: str = "web",
 ) -> str:
     """Fetch an RSS or Atom feed and ingest all articles.
@@ -271,9 +272,13 @@ def ingest_feed(
     Parses the feed, fetches each article URL, extracts its main content,
     and stores it as searchable chunks. Articles that fail to load are skipped.
 
+    Use ``since`` (ISO 8601, e.g. '2026-08-01T00:00:00Z') to only ingest
+    entries published at or after a cutoff date — useful when running on a
+    schedule to pick up only new content. Entries without a publication date
+    are always included.
+
     When a freshness store is configured, articles whose content has not changed
-    since the last call are skipped without re-embedding — making repeated calls
-    cheap for monitoring feeds on a schedule.
+    since the last call are also skipped without re-embedding.
 
     Returns the total chunk count and list of ingested article URLs.
 
@@ -282,8 +287,10 @@ def ingest_feed(
     try:
         source = _get_source()
         request: dict = {"op": "WEB.INGEST_FEED", "url": url, "collection": collection}
-        if max_items is not None:
-            request["max_items"] = max_items
+        if since is not None:
+            request["since"] = since
+        if max_entries is not None:
+            request["max_entries"] = max_entries
         records = source.execute_query(request)
         ingested_urls = sorted({r["url"] for r in records})
         return json.dumps({

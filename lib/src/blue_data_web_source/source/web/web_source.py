@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from blue_data.source.source import DataSource
@@ -109,8 +110,14 @@ class WebDataSource(DataSource):
         if not url:
             raise ValueError("WEB.INGEST_FEED requires a 'url' field")
         collection = collection_override or request.get("collection")
-        max_items = request.get("max_items")
-        return self._pipeline.ingest_feed(url, max_items=max_items, collection=collection)
+        max_entries = request.get("max_entries")
+        since: Optional[datetime] = None
+        since_str = request.get("since")
+        if since_str:
+            since = datetime.fromisoformat(since_str.replace("Z", "+00:00"))
+        return self._pipeline.ingest_feed(
+            url, max_entries=max_entries, since=since, collection=collection
+        )
 
     def _search(self, request: Dict[str, Any], collection_override=None) -> List[Dict[str, Any]]:
         query_text = request.get("query")

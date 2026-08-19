@@ -1,7 +1,16 @@
 from __future__ import annotations
 
+import calendar
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import List, Optional
+
+
+def _to_datetime(time_struct) -> Optional[datetime]:
+    """Convert feedparser's time.struct_time (UTC) to a timezone-aware datetime."""
+    if time_struct is None:
+        return None
+    return datetime.fromtimestamp(calendar.timegm(time_struct), tz=timezone.utc)
 
 
 @dataclass
@@ -10,6 +19,7 @@ class FeedEntry:
     title: Optional[str] = None
     published: Optional[str] = None
     summary: Optional[str] = None
+    published_parsed: Optional[datetime] = None
 
 
 @dataclass
@@ -55,11 +65,13 @@ class FeedParser:
             url = entry.get("link")
             if not url:
                 continue
+            published_raw = entry.get("published_parsed") or entry.get("updated_parsed")
             entries.append(FeedEntry(
                 url=url,
                 title=entry.get("title"),
                 published=entry.get("published"),
                 summary=entry.get("summary"),
+                published_parsed=_to_datetime(published_raw),
             ))
 
         feed_title: Optional[str] = None

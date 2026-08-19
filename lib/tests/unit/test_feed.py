@@ -118,6 +118,26 @@ class TestFeedParser:
         assert isinstance(result, FeedParseResult)
         assert all(isinstance(e, FeedEntry) for e in result.entries)
 
+    def test_rss_published_parsed_is_datetime(self):
+        from datetime import datetime
+        result = FeedParser().parse(RSS_FEED, _FEED_URL)
+        assert isinstance(result.entries[0].published_parsed, datetime)
+
+    def test_rss_published_parsed_is_utc_aware(self):
+        from datetime import timezone
+        result = FeedParser().parse(RSS_FEED, _FEED_URL)
+        assert result.entries[0].published_parsed.tzinfo == timezone.utc
+
+    def test_rss_entry_without_date_has_none_published_parsed(self):
+        # Article Two in RSS_FEED has no pubDate
+        result = FeedParser().parse(RSS_FEED, _FEED_URL)
+        assert result.entries[1].published_parsed is None
+
+    def test_atom_published_parsed_is_datetime(self):
+        from datetime import datetime
+        result = FeedParser().parse(ATOM_FEED, "https://example.com/atom.xml")
+        assert isinstance(result.entries[0].published_parsed, datetime)
+
 
 def test_feedparser_not_installed_raises(monkeypatch):
     monkeypatch.setitem(sys.modules, "feedparser", None)

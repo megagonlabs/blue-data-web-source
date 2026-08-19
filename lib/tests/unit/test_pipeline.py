@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from hashlib import sha256
 from unittest.mock import MagicMock, patch
 
@@ -405,11 +406,11 @@ def test_ingest_feed_ingests_each_article():
     assert len(chunks) > 0
 
 
-def test_ingest_feed_max_items_caps_articles():
+def test_ingest_feed_max_entries_caps_articles():
     pipeline = _make_pipeline()
     with patch("blue_data_web_source.source.web.feed.FeedParser") as MockParser:
         MockParser.return_value.parse.return_value = _make_feed_result(3)
-        pipeline.ingest_feed(_FEED_URL, max_items=1)
+        pipeline.ingest_feed(_FEED_URL, max_entries=1)
     # 1 call for the feed + 1 for the single article (not 3)
     assert pipeline._fetcher.fetch.call_count == 2
 
@@ -459,6 +460,53 @@ def test_ingest_feed_composes_with_freshness():
 
     assert len(first) > 0
     assert second == []
+
+
+def test_ingest_feed_since_skips_old_entries():
+    pipeline = _make_pipeline()
+    since = datetime(2026, 8, 10, tzinfo=timezone.utc)
+    entries = [
+        FeedEntry(url="https://example.com/old", published_parsed=datetime(2026, 8, 1, tzinfo=timezone.utc)),
+        FeedEntry(url="https://example.com/new", published_parsed=datetime(2026, 8, 15, tzinfo=timezone.utc)),
+    ]
+    feed_result = FeedParseResult(feed_url=_FEED_URL, feed_title="Test", entries=entries)
+
+    with patch("blue_data_web_source.source.web.feed.FeedParser") as MockParser:
+        MockParser.return_value.parse.return_value = feed_result
+        pipeline.ingest_feed(_FEED_URL, since=since)
+
+    # 1 call for feed + 1 for "new" only (old filtered out)
+    assert pipeline._fetcher.fetch.call_count == 2
+
+
+def test_ingest_feed_since_includes_entries_without_date():
+    pipeline = _make_pipeline()
+    since = datetime(2026, 8, 10, tzinfo=timezone.utc)
+    entries = [FeedEntry(url="https://example.com/no-date", published_parsed=None)]
+    feed_result = FeedParseResult(feed_url=_FEED_URL, feed_title="Test", entries=entries)
+
+    with patch("blue_data_web_source.source.web.feed.FeedParser") as MockParser:
+        MockParser.return_value.parse.return_value = feed_result
+        pipeline.ingest_feed(_FEED_URL, since=since)
+
+    # 1 call for feed + 1 for no-date article (always included per spec)
+    assert pipeline._fetcher.fetch.call_count == 2
+
+
+def test_ingest_feed_since_none_includes_all():
+    pipeline = _make_pipeline()
+    entries = [
+        FeedEntry(url="https://example.com/old", published_parsed=datetime(2020, 1, 1, tzinfo=timezone.utc)),
+        FeedEntry(url="https://example.com/new", published_parsed=datetime(2026, 8, 15, tzinfo=timezone.utc)),
+    ]
+    feed_result = FeedParseResult(feed_url=_FEED_URL, feed_title="Test", entries=entries)
+
+    with patch("blue_data_web_source.source.web.feed.FeedParser") as MockParser:
+        MockParser.return_value.parse.return_value = feed_result
+        pipeline.ingest_feed(_FEED_URL, since=None)
+
+    # 1 call for feed + 2 for both articles
+    assert pipeline._fetcher.fetch.call_count == 3
 
 
 def test_freshness_store_keyed_by_final_url_not_original():

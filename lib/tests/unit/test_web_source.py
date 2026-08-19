@@ -88,7 +88,7 @@ def test_ingest_feed_dispatches_to_pipeline():
     })
 
     source._pipeline.ingest_feed.assert_called_once_with(
-        "https://example.com/feed.xml", max_items=None, collection=None
+        "https://example.com/feed.xml", max_entries=None, since=None, collection=None
     )
     assert result == [{"chunk_id": "web_abc_chunk_0000"}]
 
@@ -99,19 +99,37 @@ def test_ingest_feed_raises_without_url():
         source.execute_query({"op": "WEB.INGEST_FEED"})
 
 
-def test_ingest_feed_passes_max_items_and_collection():
+def test_ingest_feed_passes_max_entries_and_collection():
     source = _make_source()
     source._pipeline.ingest_feed.return_value = []
 
     source.execute_query({
         "op": "WEB.INGEST_FEED",
         "url": "https://example.com/feed.xml",
-        "max_items": 5,
+        "max_entries": 5,
         "collection": "news",
     })
     source._pipeline.ingest_feed.assert_called_once_with(
-        "https://example.com/feed.xml", max_items=5, collection="news"
+        "https://example.com/feed.xml", max_entries=5, since=None, collection="news"
     )
+
+
+def test_ingest_feed_parses_since_string_to_datetime():
+    from datetime import datetime, timezone
+    source = _make_source()
+    source._pipeline.ingest_feed.return_value = []
+
+    source.execute_query({
+        "op": "WEB.INGEST_FEED",
+        "url": "https://example.com/feed.xml",
+        "since": "2026-08-10T00:00:00Z",
+    })
+
+    call_kwargs = source._pipeline.ingest_feed.call_args[1]
+    since = call_kwargs["since"]
+    assert isinstance(since, datetime)
+    assert since.tzinfo is not None
+    assert since.year == 2026 and since.month == 8 and since.day == 10
 
 
 def test_unknown_op_raises():

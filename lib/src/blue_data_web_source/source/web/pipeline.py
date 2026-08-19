@@ -143,7 +143,8 @@ class WebPipeline:
     def ingest_feed(
         self,
         url: str,
-        max_items: Optional[int] = None,
+        max_entries: Optional[int] = None,
+        since: Optional[datetime] = None,
         collection: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Fetch an RSS or Atom feed and ingest each article.
@@ -158,7 +159,11 @@ class WebPipeline:
 
         Args:
             url: RSS or Atom feed URL.
-            max_items: Cap on articles to process. ``None`` processes all entries.
+            max_entries: Cap on articles to process after date filtering. ``None``
+                processes all entries that pass the ``since`` filter.
+            since: Only ingest entries published/updated at or after this datetime
+                (must be timezone-aware). Entries with no publication date are
+                always included regardless of this filter.
             collection: Override the instance-level collection for this call only.
 
         Returns:
@@ -170,8 +175,15 @@ class WebPipeline:
         parsed = FeedParser().parse(fetch_result.html, url)
 
         entries = parsed.entries
-        if max_items is not None:
-            entries = entries[:max_items]
+
+        if since is not None:
+            entries = [
+                e for e in entries
+                if e.published_parsed is None or e.published_parsed >= since
+            ]
+
+        if max_entries is not None:
+            entries = entries[:max_entries]
 
         results: List[Dict[str, Any]] = []
         for entry in entries:
