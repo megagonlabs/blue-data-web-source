@@ -138,6 +138,25 @@ blue-data-web-source/
 
 ---
 
+## Requirements
+
+- Python 3.10+
+- [`blue-data`](../blue-data) — core registry and DataSource abstractions
+- [`blue-data-doc-source`](../blue-data-doc-source) — chunkers, embedding models, and enrichers (reused by this package)
+- Runtime: `httpx`, `trafilatura` — installed automatically
+- Optional: `[openai]` — `OpenAIEmbeddingModel`
+- Optional: `[redis]` — `RedisVectorSource`
+- Optional: `[feed]` — RSS/Atom feed ingestion (`feedparser`)
+- Optional: `[nl]` — natural language interface via Claude (`execute_query_nl`)
+
+```bash
+export OPENAI_API_KEY=sk-...        # for OpenAIEmbeddingModel
+export ANTHROPIC_API_KEY=sk-ant-... # for execute_query_nl
+export TAVILY_API_KEY=tvly-...      # for WEB.SEARCH_WEB
+```
+
+---
+
 ## Installation
 
 `blue-data-web-source` depends on `blue-data` and `blue-data-doc-source`. Install them from their local paths first:
@@ -158,14 +177,6 @@ pip install -e "lib/[redis]"                # Redis vector store
 pip install -e "lib/[feed]"                 # RSS/Atom feed ingestion (feedparser)
 pip install -e "lib/[nl]"                   # Natural language interface (Claude)
 pip install -e "lib/[openai,redis,feed,nl,dev]"  # everything + dev/test tools
-```
-
-Environment variables:
-
-```bash
-export OPENAI_API_KEY=sk-...        # for OpenAIEmbeddingModel
-export ANTHROPIC_API_KEY=sk-ant-... # for execute_query_nl
-export TAVILY_API_KEY=tvly-...      # for WEB.SEARCH_WEB
 ```
 
 ---
@@ -222,7 +233,7 @@ print(f"Ingested {len(records)} chunks")
 source.execute_query({
     "op": "WEB.INGEST_FEED",
     "url": "https://example.com/rss",
-    "max_items": 20,
+    "max_entries": 20,
     "collection": "web",
 })
 
@@ -270,7 +281,7 @@ for r in results:
 |---|---|---|---|
 | `WEB.ENSURE_INDEX` | — | `collection` | `None` |
 | `WEB.INGEST` | `url` or `urls` | `collection` | `List[Dict]` — all chunks |
-| `WEB.INGEST_FEED` | `url` | `max_items`, `collection` | `List[Dict]` — all chunks |
+| `WEB.INGEST_FEED` | `url` | `since`, `max_entries`, `collection` | `List[Dict]` — all chunks |
 | `WEB.CRAWL` | `url` | `depth` (1), `max_pages` (10), `same_domain_only` (True), `collection` | `List[Dict]` — all chunks |
 | `WEB.SEARCH_WEB` | `query` | `k` (5 URLs), `top_k` (5 chunks), `collection` | `List[Dict]` — ranked chunks |
 | `WEB.SEARCH` | `query` | `k` (5), `collection` | `List[Dict]` — ranked chunks |
@@ -281,7 +292,8 @@ for r in results:
 - Parses RSS 0.9x/1.0/2.0 and Atom with `feedparser`
 - Calls `WEB.INGEST` logic on each article URL in order
 - Articles that fail to fetch or yield no extractable content are silently skipped
-- `max_items` caps the number of entries processed (default: all)
+- `since` (ISO 8601) filters entries by publication date before fetching; entries without a date are always included
+- `max_entries` caps the number of entries processed after date filtering (default: all)
 - Composes with freshness tracking: unchanged articles return `[]` without re-embedding
 - Requires `pip install 'blue-data-web-source[feed]'`
 
@@ -322,13 +334,13 @@ URL / Feed URL
 
 **`WebDataSource`** is the top-level public entry point. It extends Blue's `DataSource` abstraction and dispatches on `op` codes. It owns a single `WebPipeline` instance reused across calls.
 
-**`WebPipeline`** orchestrates the ingestion chain. `ingest(url)` returns `List[Dict]` and optionally upserts to a vector store. `ingest_feed(url)` calls `ingest()` per article with optional `max_items`. Returns `[]` when the extractor yields no content, or when freshness tracking determines content is unchanged.
+**`WebPipeline`** orchestrates the ingestion chain. `ingest(url)` returns `List[Dict]` and optionally upserts to a vector store. `ingest_feed(url)` filters entries by `since` date, caps with `max_entries`, and calls `ingest()` per article. Returns `[]` when the extractor yields no content, or when freshness tracking determines content is unchanged.
 
 **`WebFetcher`** wraps `httpx.Client` with redirect following and a custom `User-Agent`. The `final_url` after redirects is the canonical URL for deduplication.
 
 **`WebExtractor`** wraps `trafilatura`. Returns `None` for pages with no extractable body (nav-only, login walls). After extraction it strips inline CMS navigation fragments (`Related Story:`, `Read more:`, `See also:`, `Also read:`, `Advertisement`, `Story continues`).
 
-**`FreshnesStore`** — `MemoryFreshnessStore` (in-process) or `FileFreshnessStore` (atomic JSON file). Stores `{page_id, content_hash, url, chunk_count, last_ingested_at, last_checked_at}` keyed by `page_id = "web_" + sha256(final_url)[:16]`.
+**`FreshnessStore`** — `MemoryFreshnessStore` (in-process) or `FileFreshnessStore` (atomic JSON file). Stores `{page_id, content_hash, url, chunk_count, last_ingested_at, last_checked_at}` keyed by `page_id = "web_" + sha256(final_url)[:16]`.
 
 **`VectorSource`** is Blue's abstraction. The pipeline accepts any `VectorSource` implementation — no adapter layer needed.
 
