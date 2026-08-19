@@ -10,6 +10,7 @@ Commands:
     feed           Ingest articles from an RSS or Atom feed
     search         Semantic search over ingested pages
     search-web     Search the live web and ingest results
+    extract        Extract structured fields from a web page via JSON Schema
 
 Configure via environment variables:
 
@@ -270,6 +271,68 @@ def feed(
     for u in ingested_urls:
         click.echo(f"  {u}")
     click.echo(f"\n  collection: {coll}")
+
+
+# ── extract ───────────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.argument("url")
+@click.option("--schema", "schema_str", default=None, metavar="JSON",
+              help="JSON Schema as a JSON string.")
+@click.option("--schema-file", "schema_file", default=None,
+              type=click.Path(exists=True), metavar="FILE",
+              help="Path to a JSON Schema file.")
+@click.pass_context
+def extract(
+    ctx: click.Context,
+    url: str,
+    schema_str: Optional[str],
+    schema_file: Optional[str],
+) -> None:
+    """Extract structured fields from a web page via a JSON Schema.
+
+    Fetches the URL, extracts main body text, and calls an LLM to fill in the
+    fields described by the schema. Pass the schema inline as a JSON string or
+    via a file.
+
+    Examples:
+
+    \b
+        blue-web extract https://example.com/product \\
+            --schema '{"properties": {"title": {"type": "string"}, "price": {"type": "number"}}}'
+        blue-web extract https://example.com/product --schema-file product_schema.json
+
+    Requires OPENAI_API_KEY.
+    """
+    if not schema_str and not schema_file:
+        _err("Provide --schema JSON or --schema-file FILE")
+
+    try:
+        if schema_file:
+            with open(schema_file) as fh:
+                schema = json.load(fh)
+        else:
+            schema = json.loads(schema_str)
+    except Exception as exc:
+        _err(f"Invalid schema: {exc}")
+
+    try:
+        source = get_source()
+        result = source.execute_query({"op": "WEB.EXTRACT", "url": url, "schema": schema})
+    except Exception as exc:
+        _err(str(exc))
+
+    if ctx.obj["as_json"]:
+        click.echo(json.dumps(result, indent=2, default=str))
+        return
+
+    if not result:
+        click.echo("No fields extracted (page may have no extractable content).")
+        return
+
+    click.echo(f"Extracted from {url}\n")
+    for key, val in result.items():
+        click.echo(f"  {key}: {val}")
 
 
 # ── Shared result printer ─────────────────────────────────────────────────────

@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import json
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
-from blue_data_web_cli.config import reset_source
+from blue_data_web_cli.config import reset_source, _build_source
 from blue_data_web_cli.main import cli
 
 
@@ -262,6 +263,100 @@ class TestSearch:
         mock_source.execute_query.side_effect = ValueError("No vector store configured")
         result = runner.invoke(cli, ["search", "query"])
         assert result.exit_code != 0
+
+
+# ── extract ───────────────────────────────────────────────────────────────────
+
+_SCHEMA_JSON = '{"properties": {"title": {"type": "string"}, "price": {"type": "number"}}}'
+
+
+class TestExtract:
+    def test_basic(self, runner, mock_source):
+        mock_source.execute_query.return_value = {"title": "Widget", "price": 29.99}
+        result = runner.invoke(cli, ["extract", "https://example.com", "--schema", _SCHEMA_JSON])
+        assert result.exit_code == 0
+        assert "Widget" in result.output
+
+    def test_json_output(self, runner, mock_source):
+        mock_source.execute_query.return_value = {"title": "Widget", "price": 29.99}
+        result = runner.invoke(cli, ["--json", "extract", "https://example.com", "--schema", _SCHEMA_JSON])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["title"] == "Widget"
+        assert data["price"] == 29.99
+
+    def test_schema_passed_in_request(self, runner, mock_source):
+        mock_source.execute_query.return_value = {}
+        runner.invoke(cli, ["extract", "https://example.com", "--schema", _SCHEMA_JSON])
+        call_args = mock_source.execute_query.call_args[0][0]
+        assert call_args["op"] == "WEB.EXTRACT"
+        assert call_args["url"] == "https://example.com"
+        assert isinstance(call_args["schema"], dict)
+
+    def test_schema_file(self, runner, mock_source, tmp_path):
+        schema_file = tmp_path / "schema.json"
+        schema_file.write_text(_SCHEMA_JSON)
+        mock_source.execute_query.return_value = {"title": "Widget"}
+        result = runner.invoke(cli, ["extract", "https://example.com", "--schema-file", str(schema_file)])
+        assert result.exit_code == 0
+        assert "Widget" in result.output
+
+    def test_no_schema_exits_nonzero(self, runner, mock_source):
+        result = runner.invoke(cli, ["extract", "https://example.com"])
+        assert result.exit_code != 0
+
+    def test_invalid_schema_json_exits_nonzero(self, runner, mock_source):
+        result = runner.invoke(cli, ["extract", "https://example.com", "--schema", "not-json"])
+        assert result.exit_code != 0
+
+    def test_empty_result_shown(self, runner, mock_source):
+        mock_source.execute_query.return_value = {}
+        result = runner.invoke(cli, ["extract", "https://example.com", "--schema", _SCHEMA_JSON])
+        assert result.exit_code == 0
+        assert "No fields" in result.output
+
+    def test_error_propagates(self, runner, mock_source):
+        mock_source.execute_query.side_effect = RuntimeError("fetch failed")
+        result = runner.invoke(cli, ["extract", "https://example.com", "--schema", _SCHEMA_JSON])
+        assert result.exit_code != 0
+
+
+# ── BLUE_WEB_ENRICHER config ──────────────────────────────────────────────────
+
+class TestEnricherConfig:
+    def _enricher(self, enricher_env: str, monkeypatch):
+        monkeypatch.setenv("BLUE_WEB_ENRICHER", enricher_env)
+        return _build_source()._pipeline._enricher
+
+    def test_default_is_basic_enricher(self, monkeypatch):
+        monkeypatch.delenv("BLUE_WEB_ENRICHER", raising=False)
+        from blue_data_doc_source.source.document.enrichment import BasicEnricher
+        assert isinstance(_build_source()._pipeline._enricher, BasicEnricher)
+
+    def test_none_enricher(self, monkeypatch):
+        assert self._enricher("none", monkeypatch) is None
+
+    def test_basic_enricher(self, monkeypatch):
+        from blue_data_doc_source.source.document.enrichment import BasicEnricher
+        assert isinstance(self._enricher("basic", monkeypatch), BasicEnricher)
+
+    def test_llm_enricher(self, monkeypatch):
+        from blue_data_doc_source.source.document.enrichment import LLMEnricher
+        assert isinstance(self._enricher("llm", monkeypatch), LLMEnricher)
+
+    def test_llm_enricher_has_basic_fallback(self, monkeypatch):
+        from blue_data_doc_source.source.document.enrichment import BasicEnricher, LLMEnricher
+        enricher = self._enricher("llm", monkeypatch)
+        assert isinstance(enricher, LLMEnricher)
+        assert isinstance(enricher._fallback, BasicEnricher)
+
+    def test_llm_model_env_var(self, monkeypatch):
+        monkeypatch.setenv("BLUE_WEB_ENRICHER", "llm")
+        monkeypatch.setenv("BLUE_WEB_LLM_MODEL", "gpt-4o")
+        from blue_data_doc_source.source.document.enrichment import LLMEnricher
+        enricher = _build_source()._pipeline._enricher
+        assert isinstance(enricher, LLMEnricher)
+        assert enricher._llm_fn is not None
 
 
 # ── search-web ────────────────────────────────────────────────────────────────

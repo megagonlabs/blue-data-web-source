@@ -27,6 +27,7 @@ class WebDataSource(DataSource):
     - ``WEB.SEARCH_WEB`` — search the web, ingest top-k pages on the fly, return ranked chunks
     - ``WEB.SEARCH`` — embed a query and return matching chunks via KNN
     - ``WEB.ENSURE_INDEX`` — create the vector index for a collection
+    - ``WEB.EXTRACT`` — fetch a URL and extract structured fields via a caller-supplied JSON Schema
 
     Example::
 
@@ -89,11 +90,13 @@ class WebDataSource(DataSource):
             return self._search(query, collection)
         elif op == "WEB.ENSURE_INDEX":
             return self._ensure_index(query, collection)
+        elif op == "WEB.EXTRACT":
+            return self._extract(query)
         else:
             raise ValueError(
                 f"Unsupported op: {op!r}. "
                 "Expected WEB.INGEST, WEB.INGEST_FEED, WEB.CRAWL, WEB.SEARCH_WEB, "
-                "WEB.SEARCH, or WEB.ENSURE_INDEX"
+                "WEB.SEARCH, WEB.ENSURE_INDEX, or WEB.EXTRACT"
             )
 
     def _ingest(self, request: Dict[str, Any], collection_override=None) -> List[Dict[str, Any]]:
@@ -165,6 +168,30 @@ class WebDataSource(DataSource):
         for url in urls:
             self._pipeline.ingest(url, collection=collection)
         return self._pipeline.search(query, k=top_k, collection=collection)
+
+    def _extract(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        url = request.get("url")
+        schema = request.get("schema")
+        if not url:
+            raise ValueError("WEB.EXTRACT requires a 'url' field")
+        if not schema:
+            raise ValueError("WEB.EXTRACT requires a 'schema' field (JSON Schema dict)")
+
+        try:
+            from blue_data_doc_source.source.document.schema import StructuredFieldExtractor
+        except ImportError as exc:
+            raise ImportError(
+                "blue-data-doc-source with openai is required for WEB.EXTRACT. "
+                "Install with: pip install 'blue-data-web-source[openai]'"
+            ) from exc
+
+        fetch_result = self._pipeline._fetcher.fetch(url)
+        extract_result = self._pipeline._extractor.extract(fetch_result.html, fetch_result.final_url)
+        if extract_result is None or not extract_result.text.strip():
+            return {}
+
+        extractor = StructuredFieldExtractor(schema=schema)
+        return extractor.extract(extract_result.text, document_type="web_page")
 
     def _ensure_index(self, request: Dict[str, Any], collection_override=None) -> None:
         collection = collection_override or request.get("collection")

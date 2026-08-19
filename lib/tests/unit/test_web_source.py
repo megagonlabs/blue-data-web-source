@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -141,3 +141,108 @@ def test_unknown_op_raises():
 def test_web_data_source_default_timeout_is_30_seconds():
     source = WebDataSource()
     assert source._pipeline._fetcher._timeout == 30.0
+
+
+# ---------------------------------------------------------------------------
+# WEB.EXTRACT
+# ---------------------------------------------------------------------------
+
+_SCHEMA = {"properties": {"title": {"type": "string"}, "price": {"type": "number"}}}
+
+
+def _make_source_with_real_pipeline() -> WebDataSource:
+    """Source where pipeline internals are individually mocked (not the whole pipeline)."""
+    source = WebDataSource()
+    source._pipeline._fetcher = MagicMock()
+    source._pipeline._extractor = MagicMock()
+    return source
+
+
+def _make_fetch_result(url: str = "https://example.com") -> MagicMock:
+    fr = MagicMock()
+    fr.html = "<html><body><p>Some product content here.</p></body></html>"
+    fr.final_url = url
+    return fr
+
+
+def _make_extract_result(text: str = "Product title is Widget. Price is 29.99.") -> MagicMock:
+    er = MagicMock()
+    er.text = text
+    return er
+
+
+def test_extract_raises_without_url():
+    source = _make_source()
+    with pytest.raises(ValueError, match="url"):
+        source.execute_query({"op": "WEB.EXTRACT", "schema": _SCHEMA})
+
+
+def test_extract_raises_without_schema():
+    source = _make_source()
+    with pytest.raises(ValueError, match="schema"):
+        source.execute_query({"op": "WEB.EXTRACT", "url": "https://example.com"})
+
+
+def test_extract_calls_structured_field_extractor():
+    source = _make_source_with_real_pipeline()
+    source._pipeline._fetcher.fetch.return_value = _make_fetch_result()
+    source._pipeline._extractor.extract.return_value = _make_extract_result()
+
+    mock_extractor_instance = MagicMock()
+    mock_extractor_instance.extract.return_value = {"title": "Widget", "price": 29.99}
+
+    with patch(
+        "blue_data_doc_source.source.document.schema.StructuredFieldExtractor",
+        return_value=mock_extractor_instance,
+    ) as MockSFE:
+        result = source.execute_query({
+            "op": "WEB.EXTRACT",
+            "url": "https://example.com",
+            "schema": _SCHEMA,
+        })
+
+    MockSFE.assert_called_once_with(schema=_SCHEMA)
+    mock_extractor_instance.extract.assert_called_once()
+    assert result == {"title": "Widget", "price": 29.99}
+
+
+def test_extract_returns_empty_when_no_content():
+    source = _make_source_with_real_pipeline()
+    source._pipeline._fetcher.fetch.return_value = _make_fetch_result()
+    source._pipeline._extractor.extract.return_value = None
+
+    result = source.execute_query({
+        "op": "WEB.EXTRACT",
+        "url": "https://example.com",
+        "schema": _SCHEMA,
+    })
+
+    assert result == {}
+
+
+def test_extract_returns_empty_when_text_blank():
+    source = _make_source_with_real_pipeline()
+    source._pipeline._fetcher.fetch.return_value = _make_fetch_result()
+    source._pipeline._extractor.extract.return_value = _make_extract_result(text="   ")
+
+    result = source.execute_query({
+        "op": "WEB.EXTRACT",
+        "url": "https://example.com",
+        "schema": _SCHEMA,
+    })
+
+    assert result == {}
+
+
+def test_extract_import_error_when_doc_source_missing():
+    source = _make_source_with_real_pipeline()
+    source._pipeline._fetcher.fetch.return_value = _make_fetch_result()
+    source._pipeline._extractor.extract.return_value = _make_extract_result()
+
+    with patch.dict("sys.modules", {"blue_data_doc_source.source.document.schema": None}):
+        with pytest.raises((ImportError, TypeError)):
+            source.execute_query({
+                "op": "WEB.EXTRACT",
+                "url": "https://example.com",
+                "schema": _SCHEMA,
+            })

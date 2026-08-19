@@ -15,6 +15,8 @@ Configure via environment variables:
     BLUE_WEB_OVERLAP            default: 150
     BLUE_WEB_TIMEOUT            HTTP timeout in seconds; default: 30
     BLUE_WEB_MAX_WORKERS        concurrent fetch threads; default: 10
+    BLUE_WEB_ENRICHER           none | basic | llm  (default: basic)
+    BLUE_WEB_LLM_MODEL          OpenAI model for llm enricher; default: gpt-4o-mini
     TAVILY_API_KEY              required for search_web tool (Tavily backend)
 """
 import json
@@ -31,7 +33,6 @@ _source = None
 
 
 def _build_source():
-    from blue_data_doc_source.source.document.enrichment import BasicEnricher
     from blue_data_web_source import WebDataSource
 
     embedding_backend = os.getenv("BLUE_WEB_EMBEDDING", "dummy").lower()
@@ -54,11 +55,28 @@ def _build_source():
             port=int(os.getenv("BLUE_WEB_REDIS_PORT", "6379")),
         )
 
+    enricher_backend = os.getenv("BLUE_WEB_ENRICHER", "basic").lower()
+    if enricher_backend == "none":
+        enricher = None
+    elif enricher_backend == "llm":
+        from blue_data_doc_source.source.document.enrichment import BasicEnricher, LLMEnricher
+        llm_model = os.getenv("BLUE_WEB_LLM_MODEL", "gpt-4o-mini")
+        def _llm_fn(prompt: str) -> str:
+            from openai import OpenAI
+            return OpenAI().chat.completions.create(
+                model=llm_model,
+                messages=[{"role": "user", "content": prompt}],
+            ).choices[0].message.content or ""
+        enricher = LLMEnricher(llm_fn=_llm_fn, fallback=BasicEnricher())
+    else:
+        from blue_data_doc_source.source.document.enrichment import BasicEnricher
+        enricher = BasicEnricher()
+
     return WebDataSource(
         name="web-mcp",
         embedding_model=embedding_model,
         vector_source=vector_source,
-        enricher=BasicEnricher(),
+        enricher=enricher,
         chunk_size=int(os.getenv("BLUE_WEB_CHUNK_SIZE", "1000")),
         overlap=int(os.getenv("BLUE_WEB_OVERLAP", "150")),
         default_collection=os.getenv("BLUE_WEB_COLLECTION", "web"),
@@ -260,6 +278,36 @@ def search_web(
         return json.dumps({"results": hits, "count": len(hits)})
     except Exception as exc:
         return json.dumps({"error": f"Search web failed: {exc}"})
+
+
+@mcp.tool()
+def extract(
+    url: str,
+    schema: str,
+) -> str:
+    """Extract structured fields from a web page using a caller-supplied JSON Schema.
+
+    Fetches the URL, extracts the main body text, then calls an LLM to fill in
+    the fields described by the JSON Schema. Returns a JSON object whose keys
+    match the schema properties.
+
+    The ``schema`` parameter must be a JSON-encoded JSON Schema object. Example::
+
+        schema = '{"properties": {"title": {"type": "string"}, "price": {"type": "number"}}}'
+
+    Requires OPENAI_API_KEY and ``pip install 'blue-data-web-source[openai]'``.
+    """
+    try:
+        import json as _json
+        schema_dict = _json.loads(schema)
+        result = _get_source().execute_query({
+            "op": "WEB.EXTRACT",
+            "url": url,
+            "schema": schema_dict,
+        })
+        return json.dumps(result)
+    except Exception as exc:
+        return json.dumps({"error": f"Extract failed: {exc}"})
 
 
 @mcp.tool()
