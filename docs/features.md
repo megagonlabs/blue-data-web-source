@@ -65,19 +65,23 @@ else:
 
 ## Web-provenance records
 
-Every chunk carries `url`, `domain`, and `fetch_timestamp` on every record. When present in page metadata, `title`, `author`, `date`, and `language` are also extracted and attached — making retrieval results traceable to their source page without re-fetching.
+Every chunk carries `url`, `domain`, and `fetch_timestamp` on every record. When present in page metadata, `title`, `author`, `date`, and `language` are also extracted and attached. Four structured-metadata fields are additionally extracted from JSON-LD and OpenGraph on every page: `schema_type`, `keywords`, `publisher`, and `canonical_url`.
 
 ```python
 records = source.execute_query({"op": "WEB.INGEST", "url": url, "collection": "web"})
 
 for r in records:
-    print(r["url"])             # "https://news.example.com/article"
-    print(r["domain"])          # "news.example.com"
-    print(r["fetch_timestamp"]) # "2026-08-12T10:30:00+00:00"
-    print(r.get("title"))       # "Energy Policy Update" (if found)
-    print(r.get("author"))      # "Jane Smith" (if found)
-    print(r.get("date"))        # "2026-03-15" (if found)
+    print(r["url"])               # "https://news.example.com/article"
+    print(r["domain"])            # "news.example.com"
+    print(r["fetch_timestamp"])   # "2026-08-12T10:30:00+00:00"
+    print(r.get("title"))         # "Energy Policy Update" (if found)
+    print(r.get("author"))        # "Jane Smith" (trafilatura or JSON-LD fallback)
+    print(r.get("date"))          # "2026-03-15" (trafilatura or JSON-LD fallback)
     print(r.get("section_title")) # "National Commitments" (if detected)
+    print(r.get("schema_type"))   # "NewsArticle" (from JSON-LD, if present)
+    print(r.get("keywords"))      # ["climate", "energy"] (from JSON-LD or meta, if present)
+    print(r.get("publisher"))     # "BBC News" (from JSON-LD or og:site_name, if present)
+    print(r.get("canonical_url")) # "https://news.example.com/article" (if present)
 ```
 
 `WebChunkRecord.to_dict()` omits optional fields when `None` — check key presence rather than value.
@@ -237,6 +241,74 @@ source = WebDataSource(
 
 ---
 
+## Concurrent ingestion
+
+`WEB.INGEST` with a `urls` list and `WEB.CRAWL` both run concurrently using a `ThreadPoolExecutor`. The `max_workers` parameter (default 10, set via `BLUE_WEB_MAX_WORKERS` env var) controls parallelism. The crawler runs BFS level-by-level — all pages at depth N are fetched concurrently before moving to depth N+1, with per-domain politeness locking to avoid hammering a single host.
+
+```python
+# Ingest 20 articles concurrently (up to 10 at a time by default)
+records = source.execute_query({
+    "op": "WEB.INGEST",
+    "urls": article_urls,   # list of up to 20 URLs
+    "collection": "news",
+})
+```
+
+Pass `max_workers=N` to `WebDataSource` or `WebPipeline` to tune concurrency.
+
+---
+
+## Structured field extraction
+
+`WEB.EXTRACT` fetches a URL, extracts its text, and uses `StructuredFieldExtractor` (from `blue-data-doc-source`) to pull typed fields defined by a JSON Schema or Pydantic model — no manual parsing required.
+
+```python
+schema = {
+    "type": "object",
+    "properties": {
+        "headline": {"type": "string"},
+        "author":   {"type": "string"},
+        "summary":  {"type": "string"},
+    },
+}
+
+# Single URL → dict
+fields = source.execute_query({
+    "op": "WEB.EXTRACT",
+    "url": "https://news.example.com/article",
+    "schema": schema,
+})
+print(fields["headline"], fields["author"])
+
+# Multiple URLs → list of dicts (each includes the source "url" key)
+results = source.execute_query({
+    "op": "WEB.EXTRACT",
+    "urls": ["https://news.example.com/a1", "https://news.example.com/a2"],
+    "schema": schema,
+})
+```
+
+`schema` can be a JSON Schema dict, a Pydantic model class, or a TypedDict. Requires `blue-data-doc-source` with OpenAI credentials set.
+
+---
+
+## JSON-LD / OpenGraph metadata
+
+`MetadataExtractor` runs on every page ingest (no API key, no ML). It parses JSON-LD `<script>` blocks, `<meta property="og:...">` tags, `<meta name="...">` tags, and `<link rel="canonical">` in a single pass over the raw HTML.
+
+Four fields are added to every chunk record:
+
+| Field | Source priority |
+|---|---|
+| `schema_type` | JSON-LD `@type` (e.g. `NewsArticle`, `BlogPosting`) |
+| `keywords` | JSON-LD `keywords` → `<meta name="keywords">` |
+| `publisher` | JSON-LD `publisher.name` → `og:site_name` |
+| `canonical_url` | JSON-LD `url` → `<link rel="canonical">` → `og:url` |
+
+`author`, `date`, and `description` are also filled in from structured metadata when trafilatura returns `None` — so pages that trafilatura can extract text from but not metadata (e.g. minimal `<head>` sections) still get enriched records.
+
+---
+
 ## Batch ingestion
 
 `WEB.INGEST` accepts a single `url` or a `urls` list — ingests multiple pages in one call and returns a flat list of all chunks across all URLs.
@@ -364,6 +436,8 @@ results = source.execute_query({
 
 Freshness check uses a SHA-256 hash of the raw HTTP response body — byte-level change detection, not timestamp-based. The cache file is a plain JSON file, portable and inspectable.
 
+When a `freshness_store` is set, cross-URL content deduplication is also active: if two different URLs yield identical extracted text, the second ingest is skipped automatically — no re-embedding, no duplicate chunks in the vector store.
+
 ---
 
 ## Search-augmented ingestion
@@ -434,6 +508,7 @@ Six operations — consistent with Blue's query model:
 |---|---|---|---|
 | `WEB.ENSURE_INDEX` | — | `collection` | `None` |
 | `WEB.INGEST` | `url` or `urls` | `collection` | `list[dict]` |
+| `WEB.EXTRACT` | (`url` or `urls`) + `schema` | — | `dict` or `list[dict]` |
 | `WEB.CRAWL` | `url` | `depth`(1), `max_pages`(10), `same_domain_only`(True), `collection` | `list[dict]` |
 | `WEB.INGEST_FEED` | `url` | `since` (ISO 8601), `max_entries`, `collection` | `list[dict]` |
 | `WEB.SEARCH` | `query` | `k`(5), `collection` | `list[dict]` |

@@ -12,6 +12,7 @@ The MCP server exposes blue-data-web-source as six AI-callable tools over the Mo
 | `crawl_site` | BFS-crawl a site from a seed URL |
 | `search` | Semantic search over ingested pages |
 | `search_web` | Live web search via Tavily, ingest results, return ranked chunks |
+| `extract` | Fetch a URL and extract typed fields using a JSON Schema (calls OpenAI) |
 
 ## Installation
 
@@ -33,7 +34,7 @@ All configuration is via environment variables:
 | Variable | Default | Description |
 |---|---|---|
 | `BLUE_WEB_EMBEDDING` | `dummy` | `openai` or `dummy` |
-| `OPENAI_API_KEY` | — | Required when `BLUE_WEB_EMBEDDING=openai` |
+| `OPENAI_API_KEY` | — | Required when `BLUE_WEB_EMBEDDING=openai` or `BLUE_WEB_ENRICHER=llm` |
 | `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI model name |
 | `BLUE_WEB_REDIS_HOST` | — | Redis host; omit to run without a persistent vector store |
 | `BLUE_WEB_REDIS_PORT` | `6379` | Redis port |
@@ -41,6 +42,9 @@ All configuration is via environment variables:
 | `BLUE_WEB_CHUNK_SIZE` | `1000` | Max words per chunk |
 | `BLUE_WEB_OVERLAP` | `150` | Word overlap between chunks |
 | `BLUE_WEB_TIMEOUT` | `30` | HTTP timeout in seconds |
+| `BLUE_WEB_MAX_WORKERS` | `10` | Thread pool size for concurrent fetch and BFS crawl |
+| `BLUE_WEB_ENRICHER` | `basic` | Enricher to use: `none`, `basic`, or `llm` |
+| `BLUE_WEB_LLM_MODEL` | `gpt-4o-mini` | OpenAI model used when `BLUE_WEB_ENRICHER=llm` |
 | `TAVILY_API_KEY` | — | Required for `search_web` tool (Tavily backend) |
 
 ## Running with Claude Desktop
@@ -65,7 +69,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 }
 ```
 
-Restart Claude Desktop after saving. The six tools will appear in the tool picker.
+Restart Claude Desktop after saving. The seven tools will appear in the tool picker.
 
 ## Running with Claude Code
 

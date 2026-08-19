@@ -134,7 +134,9 @@ All operations are dispatched via `WebDataSource.execute_query(op_dict)`.
 |---|---|---|---|
 | `WEB.ENSURE_INDEX` | `collection` | — | `None` |
 | `WEB.INGEST` | `url` or `urls` (list) | `collection` | `list[dict]` (WebChunkRecord) |
+| `WEB.EXTRACT` | (`url` or `urls`) + `schema` | — | `dict` or `list[dict]` |
 | `WEB.CRAWL` | `url` | `collection`, `depth`(1), `max_pages`(10), `same_domain_only`(True) | `list[dict]` |
+| `WEB.INGEST_FEED` | `url` | `since`, `max_entries`, `collection` | `list[dict]` |
 | `WEB.SEARCH` | `query` | `collection`, `k`(5) | `list[dict]` |
 | `WEB.SEARCH_WEB` | `query` | `collection`, `k`(5) | `list[dict]` |
 
@@ -154,11 +156,15 @@ Requires `pip install 'blue-data-web-source[nl]'` and `ANTHROPIC_API_KEY`.
 | `text` | str | always | Chunk text, boilerplate stripped |
 | `fetch_timestamp` | str | always | UTC ISO-8601 at ingest time |
 | `title` | str\|None | if extracted | Page title from trafilatura |
-| `author` | str\|None | if extracted | Author from meta tags |
-| `date` | str\|None | if extracted | Publish date |
-| `description` | str\|None | chunk 0 only | Meta description — NOT on later chunks |
+| `author` | str\|None | if extracted | Trafilatura or JSON-LD/meta fallback |
+| `date` | str\|None | if extracted | Trafilatura or JSON-LD fallback |
+| `description` | str\|None | chunk 0 only | Trafilatura or OG fallback — NOT on later chunks |
 | `language` | str\|None | if detected | html[lang] attribute |
 | `section_title` | str\|None | if detected | Heading above the chunk |
+| `schema_type` | str\|None | if present | Schema.org `@type` from JSON-LD (e.g. `NewsArticle`) |
+| `keywords` | list[str]\|None | if present | From JSON-LD or `<meta name="keywords">` |
+| `publisher` | str\|None | if present | From JSON-LD `publisher.name` or `og:site_name` |
+| `canonical_url` | str\|None | if present | From JSON-LD, `<link rel="canonical">`, or `og:url` |
 | `collection` | str\|None | if set | Collection name |
 | `embedding` | list[float]\|None | omitted | Omitted by `to_dict()` |
 | `entities` | list[dict] | if enriched | Added by WebPipeline when BasicEnricher used |

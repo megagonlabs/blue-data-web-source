@@ -14,6 +14,11 @@ WebExtractor        trafilatura strips boilerplate; strips CMS nav fragments;
                     returns None for pages with no extractable body
   │
   ▼
+MetadataExtractor   single-pass HTMLParser over JSON-LD, OpenGraph, <meta> tags;
+                    supplements author/date/description when trafilatura finds none;
+                    adds schema_type, keywords, publisher, canonical_url
+  │
+  ▼
 Chunker             SectionChunker (default) or WindowChunker
                     reused from blue-data-doc-source
   │
@@ -26,7 +31,7 @@ EmbeddingModel      embed each chunk text (optional)
                     reused from blue-data-doc-source
   │
   ▼
-WebChunkRecord      canonical schema — url, domain, chunk_id, provenance fields
+WebChunkRecord      canonical schema — url, domain, chunk_id, provenance + metadata fields
   │
   ▼
 VectorSource        upsert to Redis or any blue-data VectorSource (optional)
@@ -44,7 +49,7 @@ Each layer is independently injected. You can replace any stage without touching
 
 Responsibilities:
 - Accepts `execute_query({"op": "...", ...})` calls
-- Dispatches on the `"op"` field to `WEB.INGEST`, `WEB.CRAWL`, `WEB.SEARCH`, `WEB.SEARCH_WEB`, `WEB.ENSURE_INDEX`
+- Dispatches on the `"op"` field to `WEB.INGEST`, `WEB.EXTRACT`, `WEB.CRAWL`, `WEB.SEARCH`, `WEB.SEARCH_WEB`, `WEB.INGEST_FEED`, `WEB.ENSURE_INDEX`
 - Owns a single `WebPipeline` instance and a single `WebCrawler` instance reused across calls
 - Exposes `execute_query_nl(text)` for natural language dispatch via `NLQueryParser` (Claude tool use)
 
@@ -85,10 +90,13 @@ Key methods:
 | Method | Description |
 |---|---|
 | `ingest(url, collection, _fetch_result)` | Full pipeline from URL; `_fetch_result` skips fetch (used by crawler) |
+| `ingest_many(urls, collection)` | Concurrent ingest of multiple URLs via `ThreadPoolExecutor`; result order not guaranteed |
 | `search(query, k, collection)` | Embed query → KNN via VectorSource |
 | `ensure_index(collection)` | Create vector index (no-op if model or vector source absent) |
 
 `ingest` always returns a flat `list[dict]`. Returns `[]` when the extractor yields no content — never stores empty chunks.
+
+`max_workers` (default 10) controls the thread pool size for `ingest_many` and for the level-by-level concurrent BFS in `WebCrawler`.
 
 ### WebFetcher
 
@@ -160,13 +168,18 @@ class WebChunkRecord:
     text: str
     fetch_timestamp: str                  # auto-set to UTC ISO-8601 at construction
     title: Optional[str] = None
-    author: Optional[str] = None
-    date: Optional[str] = None
-    description: Optional[str] = None    # set on chunk 0 only
+    author: Optional[str] = None         # trafilatura or JSON-LD/meta fallback
+    date: Optional[str] = None           # trafilatura or JSON-LD fallback
+    description: Optional[str] = None    # set on chunk 0 only; trafilatura or OG fallback
     language: Optional[str] = None
     collection: Optional[str] = None
     section_title: Optional[str] = None
     embedding: Optional[List[float]] = None
+    # Structured metadata from JSON-LD / OpenGraph
+    schema_type: Optional[str] = None   # schema.org @type (e.g. "NewsArticle")
+    keywords: Optional[List[str]] = None # from JSON-LD or <meta name="keywords">
+    publisher: Optional[str] = None     # from JSON-LD publisher or og:site_name
+    canonical_url: Optional[str] = None # from JSON-LD url, <link rel="canonical">, or og:url
 ```
 
 `to_dict()` serialises the record and **omits** `None` optional fields — downstream consumers must check key presence, not value.
@@ -231,4 +244,5 @@ This means chunking behaviour, enrichment output, and embedding models are ident
 | Vector store backend | `WebDataSource(vector_source=MyVectorSource())` |
 | Web search backend | `WebDataSource(search_provider=MySearchProvider())` |
 | HTTP timeout | `WebDataSource(timeout=60.0)` |
+| Concurrent workers | `WebDataSource(max_workers=N)` — controls `ingest_many` and BFS crawl concurrency |
 | NL query model | `WebDataSource(nl_model="claude-opus-4-8")` |

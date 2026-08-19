@@ -18,6 +18,8 @@ WebPipeline(
     enricher: Enricher | None = None,
     collection: str = "web",
     timeout: float = 30.0,
+    freshness_store: FreshnessStore | None = None,
+    max_workers: int = 10,
 )
 ```
 
@@ -28,7 +30,8 @@ WebPipeline(
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `ingest(url)` | `list[dict]` | Fetch, extract, chunk, enrich, embed, and upsert one URL; returns `[]` when extraction yields no body |
+| `ingest(url, collection, _fetch_result)` | `list[dict]` | Fetch, extract, chunk, enrich, embed, and upsert one URL; returns `[]` when extraction yields no body |
+| `ingest_many(urls, collection)` | `list[dict]` | Concurrent ingest via `ThreadPoolExecutor`; result order not guaranteed; failed URLs silently skipped |
 | `search(query, k=5, collection=None)` | `list[dict]` | Embed query and run KNN; raises if `embedding_model` or `vector_source` is not set |
 | `ensure_index(collection=None)` | `None` | Create vector index for the collection; idempotent |
 
@@ -65,9 +68,11 @@ WebDataSource(
 | Op | Required fields | Optional fields | Returns |
 |----|-----------------|-----------------|---------|
 | `WEB.INGEST` | `url` OR `urls` | `collection` | `list[dict]` — one dict per chunk across all ingested pages |
+| `WEB.EXTRACT` | (`url` OR `urls`) + `schema` | — | `dict` (single URL) or `list[dict]` (multiple URLs) — extracted fields |
 | `WEB.CRAWL` | `url` | `depth` (default 2), `max_pages` (default 50), `same_domain_only` (default True), `collection` | `list[dict]` — flat chunk list from all crawled pages |
 | `WEB.SEARCH_WEB` | `query` | `k` (search result URLs, default 5), `top_k` (returned chunks, default 3), `collection` | `list[dict]` — semantically ranked chunks |
 | `WEB.SEARCH` | `query` | `k` (default 5), `collection` | `list[dict]` — ranked chunks from local index |
+| `WEB.INGEST_FEED` | `url` | `since` (ISO 8601), `max_entries`, `collection` | `list[dict]` — chunks from all ingested feed articles |
 | `WEB.ENSURE_INDEX` | — | `collection` | `None` |
 
 ### Methods
@@ -152,6 +157,7 @@ WebCrawler(
     respect_robots: bool = True,
     crawl_delay: float = 1.0,
     max_retries: int = 2,
+    max_workers: int = 1,
 )
 ```
 
@@ -187,12 +193,16 @@ Canonical chunk schema for web content. Constructed by `WebPipeline` and seriali
 | `text` | str | Chunk text |
 | `fetch_timestamp` | str | ISO 8601 UTC timestamp of the HTTP fetch |
 | `title` | str \| omitted | Page `<title>` or og:title from metadata |
-| `author` | str \| omitted | Author from page metadata |
-| `date` | str \| omitted | Publication date from page metadata |
-| `description` | str \| omitted | Page description; present on chunk 0 only |
+| `author` | str \| omitted | Trafilatura or JSON-LD/meta fallback |
+| `date` | str \| omitted | Trafilatura or JSON-LD `datePublished` fallback |
+| `description` | str \| omitted | Page description (chunk 0 only); trafilatura or OG fallback |
 | `language` | str \| omitted | Language code from trafilatura |
 | `collection` | str \| omitted | Vector store collection name |
 | `section_title` | str \| omitted | Section heading from `SectionChunker`; omitted when no structure detected |
+| `schema_type` | str \| omitted | Schema.org `@type` from JSON-LD (e.g. `NewsArticle`) |
+| `keywords` | list[str] \| omitted | From JSON-LD `keywords` or `<meta name="keywords">` |
+| `publisher` | str \| omitted | From JSON-LD `publisher.name` or `og:site_name` |
+| `canonical_url` | str \| omitted | From JSON-LD `url`, `<link rel="canonical">`, or `og:url` |
 | `embedding` | list[float] \| omitted | Present only when an embedding model is set |
 
 ---

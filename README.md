@@ -109,13 +109,15 @@ Not the only RSS loader or web crawler. LangChain and LlamaIndex both have RSS l
 
 ## Core capabilities
 
-- **WEB.INGEST** — fetch → extract → chunk → enrich → embed → upsert; single URL or batch `urls` list
+- **WEB.INGEST** — fetch → extract → chunk → enrich → embed → upsert; single URL or batch `urls` list; concurrent with `max_workers`
+- **WEB.EXTRACT** — fetch a URL and extract structured fields using a JSON Schema or Pydantic model via `StructuredFieldExtractor`
 - **WEB.INGEST_FEED** — parse RSS/Atom feed, filter by `since` date, ingest each article; `max_entries` cap; freshness-aware
-- **WEB.CRAWL** — BFS from seed URL; configurable depth, max_pages, same-domain filter; robots.txt + rate limiting
+- **WEB.CRAWL** — BFS from seed URL; configurable depth, max_pages, same-domain filter; robots.txt + rate limiting; concurrent per level
 - **WEB.SEARCH_WEB** — Tavily search → auto-ingest → semantic rank in one op; pluggable search backend
 - **WEB.SEARCH** — KNN over ingested chunks with configurable k and collection
 - **WEB.ENSURE_INDEX** — create the vector index for a collection
-- **Freshness tracking** — content-hash skip; `MemoryFreshnessStore` or `FileFreshnessStore` (atomic JSON)
+- **Freshness tracking** — content-hash skip per URL; cross-URL dedup skips identical text from a different URL; `MemoryFreshnessStore` or `FileFreshnessStore`
+- **JSON-LD / OpenGraph metadata** — `MetadataExtractor` parses structured metadata from every page; enriches `author`, `date`, `description` when trafilatura finds none; adds `schema_type`, `keywords`, `publisher`, `canonical_url` to every chunk
 - **Natural language interface** — `execute_query_nl` maps plain English to `WEB.*` ops via Claude tool use
 - **MCP server** — all ops exposed as MCP tools for agent use
 
@@ -281,6 +283,7 @@ for r in results:
 |---|---|---|---|
 | `WEB.ENSURE_INDEX` | — | `collection` | `None` |
 | `WEB.INGEST` | `url` or `urls` | `collection` | `List[Dict]` — all chunks |
+| `WEB.EXTRACT` | (`url` or `urls`) + `schema` | — | `Dict` or `List[Dict]` — extracted fields |
 | `WEB.INGEST_FEED` | `url` | `since`, `max_entries`, `collection` | `List[Dict]` — all chunks |
 | `WEB.CRAWL` | `url` | `depth` (1), `max_pages` (10), `same_domain_only` (True), `collection` | `List[Dict]` — all chunks |
 | `WEB.SEARCH_WEB` | `query` | `k` (5 URLs), `top_k` (5 chunks), `collection` | `List[Dict]` — ranked chunks |
@@ -332,9 +335,11 @@ URL / Feed URL
   → web_source/   — WebDataSource extends blue-data DataSource; public entry point
 ```
 
-**`WebDataSource`** is the top-level public entry point. It extends Blue's `DataSource` abstraction and dispatches on `op` codes. It owns a single `WebPipeline` instance reused across calls.
+**`WebDataSource`** is the top-level public entry point. It extends Blue's `DataSource` abstraction and dispatches on `op` codes: `WEB.INGEST`, `WEB.EXTRACT`, `WEB.CRAWL`, `WEB.SEARCH`, `WEB.SEARCH_WEB`, `WEB.INGEST_FEED`, `WEB.ENSURE_INDEX`. It owns a single `WebPipeline` instance reused across calls.
 
-**`WebPipeline`** orchestrates the ingestion chain. `ingest(url)` returns `List[Dict]` and optionally upserts to a vector store. `ingest_feed(url)` filters entries by `since` date, caps with `max_entries`, and calls `ingest()` per article. Returns `[]` when the extractor yields no content, or when freshness tracking determines content is unchanged.
+**`WebPipeline`** orchestrates the ingestion chain. `ingest(url)` returns `List[Dict]` and optionally upserts to a vector store. `ingest_many(urls)` ingests multiple URLs concurrently via `ThreadPoolExecutor`. `ingest_feed(url)` filters entries by `since` date, caps with `max_entries`, and calls `ingest_many()` per feed. Returns `[]` when the extractor yields no content, or when freshness tracking determines content is unchanged.
+
+**`MetadataExtractor`** parses JSON-LD, OpenGraph, and `<meta>` tags from raw HTML in a single pass (no ML dependency). It fills in `author`, `date`, and `description` when trafilatura returns `None`, and adds `schema_type`, `keywords`, `publisher`, and `canonical_url` to every chunk record.
 
 **`WebFetcher`** wraps `httpx.Client` with redirect following and a custom `User-Agent`. The `final_url` after redirects is the canonical URL for deduplication.
 
@@ -357,12 +362,16 @@ Every ingested chunk is serialised via `WebChunkRecord.to_dict()`. Optional fiel
 | `text` | str | Chunk text |
 | `fetch_timestamp` | str | ISO 8601 UTC timestamp of the fetch |
 | `title` | str \| omitted | Page title from trafilatura metadata |
-| `author` | str \| omitted | Author from page metadata |
-| `date` | str \| omitted | Publication date from page metadata |
-| `description` | str \| omitted | Meta description (first chunk only) |
+| `author` | str \| omitted | Author from trafilatura or JSON-LD/meta fallback |
+| `date` | str \| omitted | Publication date from trafilatura or JSON-LD fallback |
+| `description` | str \| omitted | Meta description (first chunk only); trafilatura or OG fallback |
 | `language` | str \| omitted | Detected language code |
 | `collection` | str \| omitted | Collection name used for this ingest |
 | `section_title` | str \| omitted | Section heading from SectionChunker |
+| `schema_type` | str \| omitted | Schema.org `@type` from JSON-LD (e.g. `NewsArticle`) |
+| `keywords` | list[str] \| omitted | Keywords from JSON-LD or `<meta name="keywords">` |
+| `publisher` | str \| omitted | Publisher name from JSON-LD or `og:site_name` |
+| `canonical_url` | str \| omitted | Canonical URL from JSON-LD, `<link rel="canonical">`, or `og:url` |
 | `embedding` | list[float] \| omitted | Present only when an embedding model is set |
 
 ---
@@ -410,6 +419,6 @@ Integration tests use two kinds of fixtures:
 | Freshness tracking — skip re-embedding unchanged pages | ✅ |
 | Natural language interface (`execute_query_nl`) | ✅ |
 | URL-level deduplication (same URL → same chunk IDs) | ✅ |
-| Content-level deduplication (same text, different URLs) | Not built |
+| Content-level deduplication (same text, different URLs) | ✅ |
 | Source quality / trust scoring per domain | Not built |
 | Entity resolution across sources | Not built |

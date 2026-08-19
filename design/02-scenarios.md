@@ -217,3 +217,76 @@ Claude can then:
 - Crawl a site: `"crawl https://docs.example.com up to depth 2, max 20 pages"`
 - Search: `"find everything about payment obligations in the news collection"`
 - Search the live web: `"search the web for 2026 climate targets and return the most relevant passages"`
+
+---
+
+## Scenario 9: Structured Field Extraction
+
+A developer wants to extract specific typed fields from a list of news articles — headline, author, and a one-sentence summary — without writing a custom HTML parser.
+
+**Example:**
+
+```python
+schema = {
+    "type": "object",
+    "properties": {
+        "headline": {"type": "string"},
+        "author":   {"type": "string"},
+        "summary":  {"type": "string"},
+    },
+}
+
+# Extract from a single URL — returns a dict
+fields = source.execute_query({
+    "op": "WEB.EXTRACT",
+    "url": "https://text.npr.org/nx-s1-5884537",
+    "schema": schema,
+})
+print(fields["headline"], fields.get("author"))
+
+# Extract from multiple URLs — returns a list of dicts, each with a "url" key
+results = source.execute_query({
+    "op": "WEB.EXTRACT",
+    "urls": [
+        "https://text.npr.org/nx-s1-5884537",
+        "https://text.npr.org/nx-s1-5881234",
+    ],
+    "schema": schema,
+})
+for r in results:
+    print(r["url"], r.get("headline"))
+```
+
+Requires `OPENAI_API_KEY`. The `schema` field accepts a JSON Schema dict, a Pydantic model class, or a TypedDict.
+
+---
+
+## Scenario 10: Concurrent Ingestion of a Large URL Set
+
+A news monitoring pipeline needs to ingest 50 articles as quickly as possible. Serial ingestion at ~2 seconds per page takes 100 seconds; concurrent ingestion with 10 workers completes in roughly 10–15 seconds.
+
+**Example:**
+
+```python
+from blue_data_web_source import WebDataSource
+from blue_data_doc_source.source.document.embeddings import OpenAIEmbeddingModel
+
+source = WebDataSource(
+    name="news",
+    embedding_model=OpenAIEmbeddingModel(),
+    vector_source=redis_source,
+    max_workers=10,             # up to 10 concurrent HTTP fetches
+    default_collection="news",
+)
+source.execute_query({"op": "WEB.ENSURE_INDEX", "collection": "news"})
+
+# All 50 URLs ingested concurrently — returns flat chunk list
+records = source.execute_query({
+    "op": "WEB.INGEST",
+    "urls": article_urls,       # list of 50 URLs
+    "collection": "news",
+})
+print(f"Ingested {len(set(r['url'] for r in records))} pages, {len(records)} total chunks")
+```
+
+`max_workers` is also respected by `WEB.CRAWL` — each BFS level is fetched concurrently. Per-domain locks prevent more than one simultaneous request to the same host.

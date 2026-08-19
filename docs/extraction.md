@@ -120,7 +120,9 @@ print("Result :", extracted)
 
 ## Metadata extraction
 
-trafilatura calls `extract_metadata()` internally to populate the optional fields. The extraction strategy for each field:
+### Trafilatura fields
+
+trafilatura calls `extract_metadata()` internally to populate the optional fields on `ExtractResult`. The extraction strategy for each field:
 
 **title** — tries `<title>`, `og:title`, `twitter:title`, `<h1>` in order. Returns the first match.
 
@@ -132,7 +134,51 @@ trafilatura calls `extract_metadata()` internally to populate the optional field
 
 **language** — reads `html[lang]` attribute directly.
 
-All fields can be `None` when the page provides no signals. Downstream code should always use `result.get("title")` rather than `result["title"]`.
+All fields can be `None` when the page provides no signals.
+
+### MetadataExtractor — structured metadata supplement
+
+After `WebExtractor` runs, `WebPipeline` calls `MetadataExtractor.extract(html)` to pull structured metadata from the same raw HTML. This is a single-pass `HTMLParser` with no ML dependency and no API call.
+
+```python
+from blue_data_web_source.source.web.metadata import MetadataExtractor
+
+extractor = MetadataExtractor()
+meta = extractor.extract(html)
+
+print(meta.schema_type)    # "NewsArticle" (from JSON-LD @type)
+print(meta.keywords)       # ["climate", "energy"] (from JSON-LD or meta[name=keywords])
+print(meta.publisher)      # "BBC News" (from JSON-LD publisher.name or og:site_name)
+print(meta.canonical_url)  # "https://..." (from JSON-LD url, link[rel=canonical], or og:url)
+print(meta.author)         # "Jane Doe" (from JSON-LD author or meta[name=author])
+print(meta.date_published) # "2026-08-01" (from JSON-LD datePublished or dateCreated)
+print(meta.description)    # "..." (from JSON-LD, og:description, or meta[name=description])
+```
+
+**What it parses (in one pass):**
+
+- `<script type="application/ld+json">` — JSON-LD blocks; article-type schemas (`NewsArticle`, `BlogPosting`, etc.) are preferred when multiple blocks are present
+- `<meta property="og:...">` — OpenGraph tags (`og:description`, `og:url`, `og:site_name`)
+- `<meta name="keywords">` and `<meta name="author">` — standard HTML meta tags
+- `<link rel="canonical">` — canonical URL link tag
+
+**Priority rules (highest wins):**
+
+| Field | Priority order |
+|---|---|
+| `canonical_url` | JSON-LD `url` → `<link rel="canonical">` → `og:url` |
+| `author` | JSON-LD `author` → `meta[name=author]` |
+| `keywords` | JSON-LD `keywords` → `meta[name=keywords]` |
+| `publisher` | JSON-LD `publisher.name` → `og:site_name` |
+| `description` | JSON-LD `description` → `og:description` → `meta[name=description]` |
+
+**Pipeline integration:**
+
+`WebPipeline` uses `MetadataExtractor` output to:
+1. Fill `author`, `date`, `description` on `WebChunkRecord` when trafilatura returned `None`
+2. Set `schema_type`, `keywords`, `publisher`, `canonical_url` on every chunk (independent of trafilatura)
+
+All parsing errors are silently swallowed — the result is always a `StructuredMetadata` dataclass with `None` for unresolvable fields.
 
 ---
 

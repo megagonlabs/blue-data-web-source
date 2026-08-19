@@ -189,8 +189,8 @@ def main():
     print(f"  URL A chunk_id : {id_orig}")
     print(f"  URL B chunk_id : {id_diff}")
     assert id_orig != id_diff, "Different URLs should produce different IDs"
-    _ok("Same content, different URL → different chunk IDs")
-    _ok("URL is the identity key, not content hash (unlike doc-source which hashes file bytes)")
+    _ok("Same content, different URL → different chunk IDs (URL is the identity key)")
+    _ok("Note: with a FreshnessStore, cross-URL content dedup will skip the 2nd ingest at pipeline level")
 
     # ── Summary table ────────────────────────────────────────
     print()

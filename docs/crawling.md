@@ -33,6 +33,7 @@ Returns a flat `list[dict]` — all `WebChunkRecord` dicts from all ingested pag
 | `max_pages` | `10` | Hard cap on total pages fetched regardless of depth. Crawl stops when reached |
 | `same_domain_only` | `True` | When `True`, only follows links within the seed URL's domain (`netloc`) |
 | `collection` | pipeline default | Collection to ingest into |
+| `max_workers` | `10` | Thread pool size for concurrent fetching within each BFS level; set via `BLUE_WEB_MAX_WORKERS` env var or `WebDataSource(max_workers=N)` |
 
 ### BFS traversal
 

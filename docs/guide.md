@@ -158,6 +158,40 @@ Requires `pip install 'blue-data-web-source[nl]'` and `ANTHROPIC_API_KEY`.
 
 ---
 
+## Structured field extraction
+
+`WEB.EXTRACT` fetches a URL, strips boilerplate, and pulls typed fields defined by a JSON Schema or Pydantic model using `StructuredFieldExtractor` from `blue-data-doc-source`.
+
+```python
+schema = {
+    "type": "object",
+    "properties": {
+        "headline": {"type": "string"},
+        "author":   {"type": "string"},
+        "summary":  {"type": "string"},
+    },
+}
+
+# Single URL → dict of extracted fields
+fields = source.execute_query({
+    "op": "WEB.EXTRACT",
+    "url": "https://news.example.com/article",
+    "schema": schema,
+})
+print(fields["headline"], fields.get("author"))
+
+# Multiple URLs → list of dicts (each includes the source "url" key)
+results = source.execute_query({
+    "op": "WEB.EXTRACT",
+    "urls": ["https://news.example.com/a1", "https://news.example.com/a2"],
+    "schema": schema,
+})
+```
+
+Requires `OPENAI_API_KEY` — `StructuredFieldExtractor` calls the OpenAI chat API.
+
+---
+
 ## Deduplication
 
 Chunk IDs are derived from `sha256(final_url)[:16]` — the URL after all redirects. The same URL always produces the same chunk IDs regardless of when ingestion runs.
@@ -240,8 +274,12 @@ Each returned chunk is a dict with:
 | `text` | Yes | Chunk text |
 | `fetch_timestamp` | Yes | ISO 8601 UTC |
 | `title` | When found | Page title from metadata |
-| `author` | When found | Author from page metadata |
-| `date` | When found | Publication date |
-| `description` | Chunk 0 only | Page description |
+| `author` | When found | Trafilatura or JSON-LD/meta fallback |
+| `date` | When found | Trafilatura or JSON-LD fallback |
+| `description` | Chunk 0 only | Trafilatura or OpenGraph fallback |
 | `section_title` | When detected | Section heading from `SectionChunker` |
+| `schema_type` | When present | Schema.org `@type` from JSON-LD (e.g. `NewsArticle`) |
+| `keywords` | When present | From JSON-LD or `<meta name="keywords">` |
+| `publisher` | When present | From JSON-LD `publisher.name` or `og:site_name` |
+| `canonical_url` | When present | From JSON-LD, `<link rel="canonical">`, or `og:url` |
 | `embedding` | When model set | Float vector |

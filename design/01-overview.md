@@ -18,7 +18,11 @@ blue-data-web-source is the web acquisition layer for Blue Data Intelligence. It
 - **Search** the vector store with a natural-language query: embed the query, run KNN, return ranked chunk records with full web provenance
 - **Crawl** sites using BFS from a seed URL — configurable depth and page cap, same-domain by default, fragment deduplication, skips failed pages
 - **Search the live web** via `WebSearchProvider` — query a search API for URLs, ingest the results through the full pipeline, return semantically ranked chunks
-- **Expose** all operations via blue-data's `DataSource` interface (`WEB.INGEST`, `WEB.CRAWL`, `WEB.SEARCH_WEB`, `WEB.SEARCH`, `WEB.ENSURE_INDEX`) and a natural-language query interface backed by Claude tool use
+- **Extract structured fields** from any URL using `WEB.EXTRACT` with a JSON Schema or Pydantic model — typed data without manual HTML parsing
+- **Deduplicate across URLs** — when a `FreshnessStore` is set, identical text fetched from two different URLs is detected via content hash; the second ingest is skipped silently
+- **Enrich with structured metadata** — `MetadataExtractor` parses JSON-LD, OpenGraph, and standard `<meta>` tags in one pass; adds `schema_type`, `keywords`, `publisher`, and `canonical_url` to every chunk; fills in `author`/`date`/`description` when trafilatura returns `None`
+- **Fetch concurrently** — `ingest_many` and BFS crawl both use a `ThreadPoolExecutor`; per-domain politeness locks prevent hammering a single host
+- **Expose** all operations via blue-data's `DataSource` interface (`WEB.INGEST`, `WEB.EXTRACT`, `WEB.CRAWL`, `WEB.SEARCH_WEB`, `WEB.SEARCH`, `WEB.INGEST_FEED`, `WEB.ENSURE_INDEX`) and a natural-language query interface backed by Claude tool use
 
 ## Design Philosophy
 
