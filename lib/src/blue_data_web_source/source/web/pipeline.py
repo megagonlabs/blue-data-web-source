@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any, Dict, List, Optional
@@ -38,6 +39,7 @@ class WebPipeline:
         collection: str = "web",
         timeout: float = 30.0,
         freshness_store: Optional[FreshnessStore] = None,
+        max_workers: int = 10,
     ):
         self._fetcher = WebFetcher(timeout=timeout)
         self._extractor = WebExtractor()
@@ -47,6 +49,7 @@ class WebPipeline:
         self._enricher = enricher
         self._collection = collection
         self._freshness_store = freshness_store
+        self._max_workers = max_workers
 
     def ingest(
         self,
@@ -140,6 +143,29 @@ class WebPipeline:
 
         return records
 
+    def ingest_many(
+        self,
+        urls: List[str],
+        collection: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Ingest multiple URLs concurrently.
+
+        Uses a thread pool sized to ``max_workers``. Pages that fail to fetch or
+        yield no content are silently skipped. Result order is not guaranteed.
+        """
+        if not urls:
+            return []
+        results: List[Dict[str, Any]] = []
+        workers = min(self._max_workers, len(urls))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(self.ingest, u, collection): u for u in urls}
+            for future in as_completed(futures):
+                try:
+                    results.extend(future.result())
+                except Exception:
+                    pass
+        return results
+
     def ingest_feed(
         self,
         url: str,
@@ -185,15 +211,8 @@ class WebPipeline:
         if max_entries is not None:
             entries = entries[:max_entries]
 
-        results: List[Dict[str, Any]] = []
-        for entry in entries:
-            try:
-                chunks = self.ingest(entry.url, collection=collection)
-                results.extend(chunks)
-            except Exception:
-                pass
-
-        return results
+        article_urls = [e.url for e in entries]
+        return self.ingest_many(article_urls, collection=collection)
 
     def search(self, query: str, k: int = 5, collection: Optional[str] = None) -> List[Dict[str, Any]]:
         """Embed a query and return the k nearest chunks from the vector store.

@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 
 import pytest
 
@@ -130,3 +131,52 @@ class TestFileFreshnessStore:
         open(path, "w").close()  # create empty file
         store = FileFreshnessStore(path)  # should not raise
         assert store.get("web_abc123") is None
+
+
+# ---------------------------------------------------------------------------
+# Thread-safety
+# ---------------------------------------------------------------------------
+
+
+class TestMemoryFreshnessStoreThreadSafety:
+    def test_concurrent_writes_do_not_lose_keys(self):
+        store = MemoryFreshnessStore()
+        errors: list = []
+
+        def writer(i: int) -> None:
+            try:
+                store.set(f"key_{i}", {"value": i})
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=writer, args=(i,)) for i in range(50)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors
+        for i in range(50):
+            assert store.get(f"key_{i}") == {"value": i}
+
+    def test_concurrent_deletes_do_not_raise(self):
+        store = MemoryFreshnessStore()
+        for i in range(20):
+            store.set(f"key_{i}", {"value": i})
+        errors: list = []
+
+        def deleter(i: int) -> None:
+            try:
+                store.delete(f"key_{i}")
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=deleter, args=(i,)) for i in range(20)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors
+        for i in range(20):
+            assert store.get(f"key_{i}") is None

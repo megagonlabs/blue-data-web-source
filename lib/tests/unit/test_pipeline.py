@@ -529,3 +529,64 @@ def test_freshness_store_keyed_by_final_url_not_original():
     original_pid = _page_id("https://original.example.com")
     assert store.get(canonical_pid) is not None
     assert store.get(original_pid) is None
+
+
+# ---------------------------------------------------------------------------
+# ingest_many
+# ---------------------------------------------------------------------------
+
+
+def test_ingest_many_empty_returns_empty():
+    pipeline = _make_pipeline()
+    assert pipeline.ingest_many([]) == []
+
+
+def test_ingest_many_ingests_all_urls():
+    pipeline = _make_pipeline()
+    results = pipeline.ingest_many([
+        "https://example.com/a",
+        "https://example.com/b",
+        "https://example.com/c",
+    ])
+    assert pipeline._fetcher.fetch.call_count == 3
+    assert len(results) > 0
+
+
+def test_ingest_many_skips_failed_urls():
+    pipeline = _make_pipeline()
+    pipeline._fetcher.fetch.side_effect = [
+        _make_fetch_result("https://example.com/a"),
+        Exception("connection refused"),
+        _make_fetch_result("https://example.com/c"),
+    ]
+    results = pipeline.ingest_many([
+        "https://example.com/a",
+        "https://example.com/b",
+        "https://example.com/c",
+    ])
+    fetched_urls = {
+        call.args[0] for call in pipeline._fetcher.fetch.call_args_list
+    }
+    assert fetched_urls == {
+        "https://example.com/a",
+        "https://example.com/b",
+        "https://example.com/c",
+    }
+    # Only two succeeded; at least those chunks are present
+    assert len(results) > 0
+
+
+def test_ingest_many_respects_max_workers():
+    pipeline = _make_pipeline(max_workers=2)
+    assert pipeline._max_workers == 2
+    results = pipeline.ingest_many(["https://example.com/a", "https://example.com/b"])
+    assert pipeline._fetcher.fetch.call_count == 2
+    assert len(results) > 0
+
+
+def test_ingest_many_single_url_behaves_like_ingest():
+    pipeline = _make_pipeline()
+    many = pipeline.ingest_many(["https://example.com"])
+    pipeline2 = _make_pipeline()
+    single = pipeline2.ingest("https://example.com")
+    assert len(many) == len(single)

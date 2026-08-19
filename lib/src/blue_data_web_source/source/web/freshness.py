@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 
@@ -33,15 +34,19 @@ class MemoryFreshnessStore(FreshnessStore):
 
     def __init__(self) -> None:
         self._store: Dict[str, Dict[str, Any]] = {}
+        self._lock = threading.Lock()
 
     def get(self, page_id: str) -> Optional[Dict[str, Any]]:
-        return self._store.get(page_id)
+        with self._lock:
+            return self._store.get(page_id)
 
     def set(self, page_id: str, record: Dict[str, Any]) -> None:
-        self._store[page_id] = record
+        with self._lock:
+            self._store[page_id] = record
 
     def delete(self, page_id: str) -> None:
-        self._store.pop(page_id, None)
+        with self._lock:
+            self._store.pop(page_id, None)
 
 
 class FileFreshnessStore(FreshnessStore):
@@ -57,6 +62,7 @@ class FileFreshnessStore(FreshnessStore):
     def __init__(self, path: str) -> None:
         self._path = path
         self._store: Dict[str, Dict[str, Any]] = {}
+        self._lock = threading.Lock()
         self._load()
 
     def _load(self) -> None:
@@ -73,13 +79,16 @@ class FileFreshnessStore(FreshnessStore):
         os.replace(tmp, self._path)
 
     def get(self, page_id: str) -> Optional[Dict[str, Any]]:
-        return self._store.get(page_id)
+        with self._lock:
+            return self._store.get(page_id)
 
     def set(self, page_id: str, record: Dict[str, Any]) -> None:
-        self._store[page_id] = record
-        self._save()
+        with self._lock:
+            self._store[page_id] = record
+            self._save()
 
     def delete(self, page_id: str) -> None:
-        if page_id in self._store:
-            del self._store[page_id]
-            self._save()
+        with self._lock:
+            if page_id in self._store:
+                del self._store[page_id]
+                self._save()

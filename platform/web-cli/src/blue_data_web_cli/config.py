@@ -11,6 +11,7 @@ Environment variables:
     BLUE_WEB_CHUNK_SIZE       default: 1000
     BLUE_WEB_OVERLAP          default: 150
     BLUE_WEB_TIMEOUT          HTTP timeout in seconds; default: 30
+    BLUE_WEB_MAX_WORKERS      concurrent fetch threads; default: 10
 """
 from __future__ import annotations
 
@@ -65,4 +66,5 @@ def _build_source():
         overlap=int(os.getenv("BLUE_WEB_OVERLAP", "150")),
         default_collection=os.getenv("BLUE_WEB_COLLECTION", "web"),
         timeout=float(os.getenv("BLUE_WEB_TIMEOUT", "30")),
+        max_workers=int(os.getenv("BLUE_WEB_MAX_WORKERS", "10")),
     )

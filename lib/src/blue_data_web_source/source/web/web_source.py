@@ -53,6 +53,7 @@ class WebDataSource(DataSource):
         nl_model: str = "claude-opus-4-8",
         search_provider: Optional[WebSearchProvider] = None,
         freshness_store: Optional[FreshnessStore] = None,
+        max_workers: int = 10,
         properties: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(name, properties)
@@ -60,6 +61,7 @@ class WebDataSource(DataSource):
         self._nl_model = nl_model
         self._nl_parser = None
         self._search_provider = search_provider
+        self._max_workers = max_workers
         self._pipeline = WebPipeline(
             chunk_size=chunk_size,
             overlap=overlap,
@@ -69,6 +71,7 @@ class WebDataSource(DataSource):
             collection=default_collection,
             timeout=timeout,
             freshness_store=freshness_store,
+            max_workers=max_workers,
         )
 
     def execute_query(self, query, database=None, collection=None, optional_properties=None):
@@ -100,10 +103,9 @@ class WebDataSource(DataSource):
             raise ValueError("WEB.INGEST requires a 'url' or 'urls' field")
         collection = collection_override or request.get("collection")
         targets = [url] if url else urls
-        results: List[Dict[str, Any]] = []
-        for u in targets:
-            results.extend(self._pipeline.ingest(u, collection=collection))
-        return results
+        if len(targets) == 1:
+            return self._pipeline.ingest(targets[0], collection=collection)
+        return self._pipeline.ingest_many(targets, collection=collection)
 
     def _ingest_feed(self, request: Dict[str, Any], collection_override=None) -> List[Dict[str, Any]]:
         url = request.get("url")
@@ -140,6 +142,7 @@ class WebDataSource(DataSource):
             respect_robots=request.get("respect_robots", True),
             crawl_delay=request.get("crawl_delay", 1.0),
             max_retries=request.get("max_retries", 2),
+            max_workers=request.get("max_workers", self._max_workers),
         )
         return crawler.crawl(
             seed_url=url,

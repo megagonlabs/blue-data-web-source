@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import threading
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from html.parser import HTMLParser
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
@@ -60,6 +62,9 @@ class WebCrawler:
         max_retries: How many times to retry transient failures (5xx, timeout,
             transport errors) before skipping the page. Uses exponential
             backoff (1s, 2s, …).
+        max_workers: Thread pool size for concurrent page fetches within a
+            crawl level. Defaults to 1 (serial). Per-domain locking ensures
+            politeness regardless of worker count.
     """
 
     def __init__(
@@ -70,6 +75,7 @@ class WebCrawler:
         respect_robots: bool = True,
         crawl_delay: float = 1.0,
         max_retries: int = 2,
+        max_workers: int = 1,
     ) -> None:
         self._pipeline = pipeline
         self._fetcher = fetcher
@@ -77,8 +83,12 @@ class WebCrawler:
         self._respect_robots = respect_robots
         self._crawl_delay = crawl_delay
         self._max_retries = max_retries
+        self._max_workers = max_workers
         self._robots_cache: Dict[str, Optional[RobotFileParser]] = {}
+        self._robots_cache_lock = threading.Lock()
         self._last_fetch_time: Dict[str, float] = {}
+        self._domain_locks: Dict[str, threading.Lock] = {}
+        self._domain_locks_mutex = threading.Lock()
 
     # ------------------------------------------------------------------
     # robots.txt helpers
@@ -87,15 +97,19 @@ class WebCrawler:
     def _get_robots(self, url: str) -> Optional[RobotFileParser]:
         parsed = urlparse(url)
         domain = parsed.netloc
-        if domain not in self._robots_cache:
-            robots_url = f"{parsed.scheme}://{domain}/robots.txt"
-            rp = RobotFileParser(robots_url)
-            try:
-                rp.read()
+        with self._robots_cache_lock:
+            if domain in self._robots_cache:
+                return self._robots_cache[domain]
+        robots_url = f"{parsed.scheme}://{domain}/robots.txt"
+        rp = RobotFileParser(robots_url)
+        try:
+            rp.read()
+        except Exception:
+            rp = None
+        with self._robots_cache_lock:
+            if domain not in self._robots_cache:
                 self._robots_cache[domain] = rp
-            except Exception:
-                self._robots_cache[domain] = None
-        return self._robots_cache[domain]
+            return self._robots_cache[domain]
 
     def _is_allowed(self, url: str) -> bool:
         if not self._respect_robots:
@@ -117,6 +131,13 @@ class WebCrawler:
     # ------------------------------------------------------------------
     # Politeness
     # ------------------------------------------------------------------
+
+    def _get_domain_lock(self, url: str) -> threading.Lock:
+        domain = urlparse(url).netloc
+        with self._domain_locks_mutex:
+            if domain not in self._domain_locks:
+                self._domain_locks[domain] = threading.Lock()
+            return self._domain_locks[domain]
 
     def _wait_for_domain(self, url: str) -> None:
         domain = urlparse(url).netloc
@@ -145,9 +166,34 @@ class WebCrawler:
             time.sleep(2 ** attempt)
         return None
 
+    def _fetch_page(self, url: str) -> Optional[FetchResult]:
+        """Fetch a page while holding the per-domain politeness lock."""
+        domain_lock = self._get_domain_lock(url)
+        with domain_lock:
+            self._wait_for_domain(url)
+            return self._fetch_with_retry(url)
+
     # ------------------------------------------------------------------
     # Crawl
     # ------------------------------------------------------------------
+
+    def _process_url(
+        self,
+        url: str,
+        collection: Optional[str],
+        extract_links: bool,
+    ) -> Tuple[List[dict], List[str]]:
+        """Fetch one URL, ingest it, and optionally extract outbound links."""
+        fetch_result = self._fetch_page(url)
+        if fetch_result is None:
+            return [], []
+        chunks = self._pipeline.ingest(url, collection=collection, _fetch_result=fetch_result)
+        links: List[str] = []
+        if extract_links:
+            extractor = _LinkExtractor(fetch_result.final_url)
+            extractor.feed(fetch_result.html)
+            links = extractor.links
+        return chunks, links
 
     def crawl(
         self,
@@ -158,6 +204,10 @@ class WebCrawler:
     ) -> List[dict]:
         """Crawl from *seed_url* and return a flat list of all ingested chunks.
 
+        Pages at each depth level are processed concurrently up to ``max_workers``
+        threads. Per-domain locking ensures the configured crawl delay is respected
+        regardless of concurrency.
+
         Args:
             seed_url: Starting URL.
             depth: How many link-hops to follow (0 = seed only, 1 = seed + its links, …).
@@ -166,42 +216,56 @@ class WebCrawler:
             collection: Vector store collection to upsert into.
         """
         seed_netloc = urlparse(seed_url).netloc
-        seen: Set[str] = set()       # all URLs processed (prevents re-queuing)
-        fetch_count = 0              # pages actually attempted (counts toward max_pages)
-        queue: deque[tuple[str, int]] = deque([(seed_url, 0)])
+        seen: Set[str] = {_normalise(seed_url)}
+        fetch_count = 0
         all_chunks: List[dict] = []
 
-        while queue and fetch_count < max_pages:
-            url, current_depth = queue.popleft()
-            url = _normalise(url)
+        current_level = [seed_url]
 
-            if url in seen:
-                continue
-            seen.add(url)
+        for current_depth in range(depth + 1):
+            if not current_level or fetch_count >= max_pages:
+                break
 
-            if not _is_http(url):
-                continue
-            if self._same_domain_only and not _same_domain(url, seed_netloc):
-                continue
-            if not self._is_allowed(url):
-                continue
+            # Filter to eligible URLs for this level, respecting max_pages cap
+            to_process: List[str] = []
+            for url in current_level:
+                if fetch_count + len(to_process) >= max_pages:
+                    break
+                if not _is_http(url):
+                    continue
+                if self._same_domain_only and not _same_domain(url, seed_netloc):
+                    continue
+                if not self._is_allowed(url):
+                    continue
+                to_process.append(url)
 
-            fetch_count += 1
-            self._wait_for_domain(url)
+            if not to_process:
+                break
 
-            fetch_result = self._fetch_with_retry(url)
-            if fetch_result is None:
-                continue
+            fetch_count += len(to_process)
+            extract_links = current_depth < depth
+            next_level_links: List[str] = []
 
-            chunks = self._pipeline.ingest(url, collection=collection, _fetch_result=fetch_result)
-            all_chunks.extend(chunks)
+            workers = min(self._max_workers, len(to_process))
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {
+                    executor.submit(self._process_url, url, collection, extract_links): url
+                    for url in to_process
+                }
+                for future in as_completed(futures):
+                    try:
+                        chunks, links = future.result()
+                        all_chunks.extend(chunks)
+                        next_level_links.extend(links)
+                    except Exception:
+                        pass
 
-            if current_depth < depth:
-                extractor = _LinkExtractor(fetch_result.final_url)
-                extractor.feed(fetch_result.html)
-                for link in extractor.links:
-                    normalised = _normalise(link)
-                    if normalised not in seen:
-                        queue.append((normalised, current_depth + 1))
+            # Build the next level from discovered links, preserving BFS order
+            current_level = []
+            for link in next_level_links:
+                normalised = _normalise(link)
+                if normalised not in seen:
+                    seen.add(normalised)
+                    current_level.append(normalised)
 
         return all_chunks

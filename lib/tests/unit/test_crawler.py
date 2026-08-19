@@ -446,3 +446,53 @@ def test_crawl_retry_uses_exponential_backoff():
 
     # Backoff should be 1s, 2s, 4s (2^0, 2^1, 2^2)
     assert sleep_calls == [1, 2, 4]
+
+
+# ---------------------------------------------------------------------------
+# Concurrent crawl (max_workers)
+# ---------------------------------------------------------------------------
+
+def test_crawler_accepts_max_workers_param():
+    fetcher = _make_fetcher({_BASE + "/": _INDEX_HTML})
+    pipeline = _make_pipeline()
+    crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
+                         respect_robots=False, crawl_delay=0, max_retries=0,
+                         max_workers=4)
+    assert crawler._max_workers == 4
+    crawler.crawl(_BASE + "/", depth=0, max_pages=10)
+    assert pipeline.ingest.call_count == 1
+
+
+def test_crawler_multi_worker_ingests_all_pages():
+    url_map = {
+        _BASE + "/": _INDEX_HTML,
+        _BASE + "/about": _ABOUT_HTML,
+        _BASE + "/contact": _CONTACT_HTML,
+    }
+    fetcher = _make_fetcher(url_map)
+    pipeline = _make_pipeline()
+    crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
+                         respect_robots=False, crawl_delay=0, max_retries=0,
+                         max_workers=3)
+    crawler.crawl(_BASE + "/", depth=1, max_pages=10)
+
+    crawled = {call.args[0] for call in pipeline.ingest.call_args_list}
+    assert _BASE + "/" in crawled
+    assert _BASE + "/about" in crawled
+    assert _BASE + "/contact" in crawled
+
+
+def test_crawler_multi_worker_respects_max_pages():
+    url_map = {
+        _BASE + "/": _INDEX_HTML,
+        _BASE + "/about": _ABOUT_HTML,
+        _BASE + "/contact": _CONTACT_HTML,
+    }
+    fetcher = _make_fetcher(url_map)
+    pipeline = _make_pipeline()
+    crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
+                         respect_robots=False, crawl_delay=0, max_retries=0,
+                         max_workers=3)
+    crawler.crawl(_BASE + "/", depth=1, max_pages=2)
+
+    assert pipeline.ingest.call_count <= 2
