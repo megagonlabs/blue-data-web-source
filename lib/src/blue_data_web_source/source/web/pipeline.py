@@ -14,6 +14,7 @@ from blue_data_doc_source.source.document.enrichment import Enricher
 from .extractor import WebExtractor
 from .fetcher import FetchResult, WebFetcher
 from .freshness import FreshnessStore
+from .metadata import MetadataExtractor
 from .record import WebChunkRecord
 
 
@@ -43,6 +44,7 @@ class WebPipeline:
     ):
         self._fetcher = WebFetcher(timeout=timeout)
         self._extractor = WebExtractor()
+        self._metadata_extractor = MetadataExtractor()
         self._chunker = chunker or SectionChunker(chunk_size=chunk_size, overlap=overlap)
         self._embedding_model = embedding_model
         self._vector_source = vector_source
@@ -74,6 +76,8 @@ class WebPipeline:
         extract_result = self._extractor.extract(fetch_result.html, fetch_result.final_url)
         if extract_result is None or not extract_result.text.strip():
             return []
+
+        meta = self._metadata_extractor.extract(fetch_result.html)
 
         domain = urlparse(fetch_result.final_url).netloc
         page_id = "web_" + sha256(fetch_result.final_url.encode()).hexdigest()[:16]
@@ -115,13 +119,17 @@ class WebPipeline:
                 chunk_index=idx,
                 text=chunk_text,
                 title=extract_result.title,
-                author=extract_result.author,
-                date=extract_result.date,
-                description=extract_result.description if idx == 0 else None,
+                author=extract_result.author or meta.author,
+                date=extract_result.date or meta.date_published,
+                description=(extract_result.description or meta.description) if idx == 0 else None,
                 language=extract_result.language,
                 collection=effective_collection,
                 section_title=section_title,
                 embedding=embedding,
+                schema_type=meta.schema_type,
+                keywords=meta.keywords,
+                publisher=meta.publisher,
+                canonical_url=meta.canonical_url,
             )
             record_dict = record.to_dict()
             if entities:

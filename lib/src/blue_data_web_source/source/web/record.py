@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import List, Optional
 
 
 def _utcnow() -> str:
@@ -15,15 +16,20 @@ class WebChunkRecord:
     chunk_id: str
     chunk_index: int
     text: str
-    title: str | None = None
-    author: str | None = None
-    date: str | None = None
-    description: str | None = None
-    language: str | None = None
-    collection: str | None = None
-    section_title: str | None = None
+    title: Optional[str] = None
+    author: Optional[str] = None
+    date: Optional[str] = None
+    description: Optional[str] = None
+    language: Optional[str] = None
+    collection: Optional[str] = None
+    section_title: Optional[str] = None
     fetch_timestamp: str = field(default_factory=_utcnow)
-    embedding: list[float] | None = None
+    embedding: Optional[List[float]] = None
+    # Structured metadata from JSON-LD / OpenGraph
+    schema_type: Optional[str] = None
+    keywords: Optional[List[str]] = None
+    publisher: Optional[str] = None
+    canonical_url: Optional[str] = None
 
     def to_dict(self) -> dict:
         d: dict = {
@@ -42,10 +48,15 @@ class WebChunkRecord:
             "language",
             "collection",
             "section_title",
+            "schema_type",
+            "publisher",
+            "canonical_url",
         ):
             val = getattr(self, key)
             if val is not None:
                 d[key] = val
+        if self.keywords:
+            d["keywords"] = self.keywords
         if self.embedding is not None:
             d["embedding"] = self.embedding
         return d
