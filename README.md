@@ -1,6 +1,6 @@
 # blue-data-web-source
 
-`blue-data-web-source` is a web ingestion and retrieval source for Blue Data Intelligence. It turns URLs, RSS feeds, and crawled sites into searchable vector chunks — with freshness tracking, polite crawling, and live-search-then-ingest built in — and registers web content as a first-class member of Blue's DataRegistry alongside databases, documents, and graph stores.
+Web pages are live data — they update on a schedule, appear through feeds, and belong alongside SQL tables, documents, and graph stores in an agent's data layer. `blue-data-web-source` handles the full pipeline from URL to queryable vector index, with freshness tracking that makes incremental updates cheap and feed subscription that makes scheduled monitoring automatic. It plugs into blue-data's `DataRegistry` so web content becomes a first-class member of the same intelligence layer as the rest of your data.
 
 → **[Installation](#installation)** · **[Ops reference](#ops-reference)** · **[Architecture](#architecture)** · **[Testing](#running-tests)**
 
@@ -8,85 +8,109 @@
 
 ## Why blue-data-web-source
 
-Web loaders exist in LangChain, LlamaIndex, Crawl4AI, and as managed services (Firecrawl, Jina). Here is an honest account of where this library earns its place.
+The genuine differentiator is not any single feature — it is the combination: content-addressed freshness tracking, feed subscription with date-based filtering, a live-search-then-ingest op, and DataRegistry integration. Together these make web content an updatable, queryable part of an agent's data layer rather than a point-in-time scrape that goes stale immediately.
 
-### Freshness-aware ingestion
+**Failure 1 — Re-embedding 500 pages when 480 haven't changed**
 
-Most web loaders are stateless: they re-fetch and re-embed every page on every call. `blue-data-web-source` tracks a SHA-256 hash of each page's extracted text. When `WEB.INGEST` or `WEB.INGEST_FEED` is called again on the same URL, unchanged pages return in milliseconds without touching the embedding model. Only new or changed content goes through the pipeline.
+A news monitoring agent ingests 500 pages per scheduled run. Most days the majority of those pages — evergreen articles, documentation, policy pages — haven't changed since the last run. Without freshness tracking, every run re-fetches and re-embeds all 500. At standard embedding API pricing, a corpus that generates 250K tokens of chunks costs real money per run in unchanged content alone.
+
+`blue-data-web-source` tracks a SHA-256 hash of each page's extracted text. Re-ingesting an unchanged URL returns `[]` in milliseconds — no HTTP re-fetch, no embedding call, no upsert. Only new or changed pages touch the embedding model.
 
 ```python
 from blue_data_web_source import WebDataSource, FileFreshnessStore
 
 source = WebDataSource(
-    ...,
-    freshness_store=FileFreshnessStore("freshness.json"),
+    embedding_model=OpenAIEmbeddingModel(),
+    vector_source=redis_source,
+    freshness_store=FileFreshnessStore("freshness.json"),  # persists across restarts
 )
 
-# First call: fetches, extracts, embeds, stores
-source.execute_query({"op": "WEB.INGEST", "url": "https://example.com/article"})
+# Run 1: all 20 articles fetched, extracted, and embedded
+source.execute_query({"op": "WEB.INGEST", "urls": article_urls, "collection": "news"})
 
-# Second call: content unchanged → returns [] in milliseconds, no re-embedding
-source.execute_query({"op": "WEB.INGEST", "url": "https://example.com/article"})
+# Run 2 (next day): content unchanged → 0 embedding calls, [] per unchanged URL
+source.execute_query({"op": "WEB.INGEST", "urls": article_urls, "collection": "news"})
 ```
 
-`last_checked_at` updates on every call; `last_ingested_at` updates only when content changes. The freshness store persists across restarts (`FileFreshnessStore`) or stays in-process (`MemoryFreshnessStore`).
+`last_checked_at` updates on every run; `last_ingested_at` updates only when content changes. LangChain's web loaders and LlamaIndex readers are stateless — they re-process everything every call.
 
-### RSS/Atom feed subscription with incremental updates
+**Failure 2 — Monitoring a blog means crawling the whole site or maintaining a URL list**
 
-`WEB.INGEST_FEED` parses any RSS or Atom feed and ingests each article. Combined with freshness tracking, calling the same feed URL daily only re-embeds new or changed articles — the rest are skipped.
+An agent that monitors a publication for new posts has two options without feed support: crawl the entire site on a schedule (slow, impolite, picks up non-article pages) or maintain a list of known URLs by hand (misses new posts, requires external tooling). Neither scales to a corpus of ten sources monitored daily.
+
+RSS and Atom feeds give you article URLs, titles, and publication dates without crawling. `WEB.INGEST_FEED` fetches the feed, filters by `since` date so only new entries are considered, and ingests each article through the same pipeline as `WEB.INGEST`. Combined with freshness tracking, re-running on subsequent days only re-embeds articles whose content actually changed.
 
 ```python
-# Day 1: ingests 20 articles, embeds all 20
+# Day 1: all entries on or after the cutoff are new — fetched and embedded
 source.execute_query({
     "op": "WEB.INGEST_FEED",
-    "url": "https://example.com/rss",
-    "max_items": 20,
+    "url": "https://feeds.npr.org/1001/rss.xml",
+    "since": "2026-08-01T00:00:00Z",  # only entries published at or after this date
+    "max_entries": 20,
+    "collection": "news",
 })
 
-# Day 2: 18 unchanged, 2 new → only 2 articles re-embedded
+# Day 2: advance the cutoff; freshness store skips articles that haven't changed
 source.execute_query({
     "op": "WEB.INGEST_FEED",
-    "url": "https://example.com/rss",
-    "max_items": 20,
+    "url": "https://feeds.npr.org/1001/rss.xml",
+    "since": "2026-08-17T00:00:00Z",
+    "max_entries": 20,
+    "collection": "news",
 })
 ```
 
-LangChain's `RSSFeedLoader` and LlamaIndex's `RssReader` have no freshness state — they re-load and re-embed every entry on every call.
+Entries without a publication date are always included — they pass the `since` filter regardless of the cutoff. LangChain's `RSSFeedLoader` and LlamaIndex's `RssReader` re-load all entries on every call with no date filtering.
 
-### DataRegistry integration
+**Failure 3 — Live web search gives you URLs; you still have to fetch, extract, embed, and rank them**
 
-`WebDataSource` extends Blue's `DataSource` abstraction. Web content participates in the same `DataRegistry` as SQL tables, document collections, and knowledge graphs. An agent using the registry can query across all of them with one call — no per-source glue code needed.
+An agent needs current information on a topic. It calls a search API, gets 10 URLs, then must fetch each page, strip boilerplate, chunk the text, embed each chunk, and rank by relevance to the original query. That is 50+ lines of integration code before a single result comes back — and it needs timeout handling, failed-fetch recovery, and deduplication on top.
 
-Web ingestion alone does not require this. If you just want to fetch URLs, the pipeline layer (`WebPipeline`) is sufficient. The DataRegistry integration is the reason to use `WebDataSource`.
-
-### Search-then-ingest in one op
-
-`WEB.SEARCH_WEB` calls a search API (Tavily by default), ingests the top-k result pages on the fly, and returns semantically ranked chunks — all in one call. Most tools give you either a search API or an ingestion library; wiring them together is left to the caller.
+`WEB.SEARCH_WEB` does this in one call: search API → fetch and extract each result → chunk and embed → semantic rank → return chunks.
 
 ```python
 results = source.execute_query({
     "op": "WEB.SEARCH_WEB",
-    "query": "latest greenhouse gas reduction targets 2026",
-    "k": 5,
+    "query": "GDPR enforcement actions Q3 2026",
+    "k": 5,      # pages to fetch from the search API
+    "top_k": 3,  # chunks to return after semantic ranking
+    "collection": "web",
 })
+for r in results:
+    print(r["url"], r["text"][:120])
 ```
 
-### Polite crawling by default
+Re-running the same query does not re-fetch already-ingested pages. URL-hash deduplication means the same final URL always maps to the same chunk IDs — re-running is a safe upsert.
 
-`WEB.CRAWL` checks `robots.txt` before fetching each page and enforces per-domain rate limiting with exponential backoff on retries. LangChain's `RecursiveUrlLoader` does neither. This matters when running agents against real sites on a schedule.
+**The integration story: web content alongside your other data**
 
-### What it does not claim to be
+A research agent answers questions by combining recent web pages, internal documents, and structured database records. With standalone web loaders, web content lives in a separate search index — the agent queries it separately, merges results by hand, and deals with different chunk schemas across sources.
 
-- **Not the best HTML extractor**: Firecrawl (managed) and Crawl4AI produce cleaner output in some cases. This library uses `trafilatura`, which is solid open-source but not the market leader on extraction quality.
-- **Not the only RSS ingestion tool**: LangChain and LlamaIndex both have RSS loaders. The differentiator here is freshness composition, not RSS support alone.
-- **Not the only web crawler**: Many libraries crawl. The differentiator here is robots.txt + rate limiting + DataRegistry integration combined.
+`WebDataSource` extends blue-data's `DataSource` ABC and registers in the same `DataRegistry` as SQL sources, document collections, and knowledge graphs. Web content becomes a first-class member of the same data layer — same registration model, consistent chunk schema, no per-source glue code.
+
+```python
+from blue_data import DataRegistry
+
+registry = DataRegistry()
+registry.register(sql_source)   # CRM: company and vendor records
+registry.register(doc_source)   # internal contracts and policies
+registry.register(web_source)   # live web pages and monitored feeds
+```
+
+**What it does not do**
+
+No JavaScript rendering. Sites that require a headless browser — React/Next.js apps, login-walled content, dynamically loaded article bodies — return empty from `WebExtractor`. Use Firecrawl or Crawl4AI when JS execution is required.
+
+Not built for high-volume crawling. The BFS crawler is polite (robots.txt, rate limiting, retry backoff) and appropriate for tens to hundreds of pages. For thousands of pages or production-scale scraping, use Firecrawl or Apify.
+
+Not the only RSS loader or web crawler. LangChain and LlamaIndex both have RSS loaders and web crawlers. The differentiator here is freshness composition and DataRegistry integration, not RSS or crawling alone.
 
 ---
 
 ## Core capabilities
 
 - **WEB.INGEST** — fetch → extract → chunk → enrich → embed → upsert; single URL or batch `urls` list
-- **WEB.INGEST_FEED** — parse RSS/Atom feed, ingest each article; `max_items` cap; freshness-aware
+- **WEB.INGEST_FEED** — parse RSS/Atom feed, filter by `since` date, ingest each article; `max_entries` cap; freshness-aware
 - **WEB.CRAWL** — BFS from seed URL; configurable depth, max_pages, same-domain filter; robots.txt + rate limiting
 - **WEB.SEARCH_WEB** — Tavily search → auto-ingest → semantic rank in one op; pluggable search backend
 - **WEB.SEARCH** — KNN over ingested chunks with configurable k and collection
