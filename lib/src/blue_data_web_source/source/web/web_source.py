@@ -169,13 +169,14 @@ class WebDataSource(DataSource):
             self._pipeline.ingest(url, collection=collection)
         return self._pipeline.search(query, k=top_k, collection=collection)
 
-    def _extract(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    def _extract(self, request: Dict[str, Any]) -> Any:
         url = request.get("url")
+        urls = request.get("urls")
         schema = request.get("schema")
-        if not url:
-            raise ValueError("WEB.EXTRACT requires a 'url' field")
+        if not url and not urls:
+            raise ValueError("WEB.EXTRACT requires a 'url' or 'urls' field")
         if not schema:
-            raise ValueError("WEB.EXTRACT requires a 'schema' field (JSON Schema dict)")
+            raise ValueError("WEB.EXTRACT requires a 'schema' field (JSON Schema dict or Pydantic model)")
 
         try:
             from blue_data_doc_source.source.document.schema import StructuredFieldExtractor
@@ -185,13 +186,24 @@ class WebDataSource(DataSource):
                 "Install with: pip install 'blue-data-web-source[openai]'"
             ) from exc
 
-        fetch_result = self._pipeline._fetcher.fetch(url)
-        extract_result = self._pipeline._extractor.extract(fetch_result.html, fetch_result.final_url)
-        if extract_result is None or not extract_result.text.strip():
-            return {}
-
         extractor = StructuredFieldExtractor(schema=schema)
-        return extractor.extract(extract_result.text, document_type="web_page")
+        def _extract_one(target_url: str) -> Dict[str, Any]:
+            fetch_result = self._pipeline._fetcher.fetch(target_url)
+            extract_result = self._pipeline._extractor.extract(fetch_result.html, fetch_result.final_url)
+            if extract_result is None or not extract_result.text.strip():
+                return {}
+            return extractor.extract(extract_result.text, document_type="web_page")
+
+        if url:
+            return _extract_one(url)
+
+        results = []
+        for target_url in urls:
+            fields = _extract_one(target_url)
+            if fields:
+                fields["url"] = target_url
+            results.append(fields)
+        return results
 
     def _ensure_index(self, request: Dict[str, Any], collection_override=None) -> None:
         collection = collection_override or request.get("collection")

@@ -234,6 +234,51 @@ def test_extract_returns_empty_when_text_blank():
     assert result == {}
 
 
+def test_extract_urls_returns_list():
+    source = _make_source_with_real_pipeline()
+    source._pipeline._fetcher.fetch.return_value = _make_fetch_result()
+    source._pipeline._extractor.extract.return_value = _make_extract_result()
+
+    mock_extractor_instance = MagicMock()
+    mock_extractor_instance.extract.return_value = {"title": "Widget", "price": 29.99}
+
+    with patch(
+        "blue_data_doc_source.source.document.schema.StructuredFieldExtractor",
+        return_value=mock_extractor_instance,
+    ):
+        result = source.execute_query({
+            "op": "WEB.EXTRACT",
+            "urls": ["https://example.com/a", "https://example.com/b"],
+            "schema": _SCHEMA,
+        })
+
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert all("url" in r for r in result)
+
+
+def test_extract_urls_includes_url_in_each_result():
+    source = _make_source_with_real_pipeline()
+    source._pipeline._fetcher.fetch.return_value = _make_fetch_result()
+    source._pipeline._extractor.extract.return_value = _make_extract_result()
+
+    mock_extractor_instance = MagicMock()
+    mock_extractor_instance.extract.return_value = {"title": "Widget"}
+
+    with patch(
+        "blue_data_doc_source.source.document.schema.StructuredFieldExtractor",
+        return_value=mock_extractor_instance,
+    ):
+        result = source.execute_query({
+            "op": "WEB.EXTRACT",
+            "urls": ["https://example.com/a"],
+            "schema": _SCHEMA,
+        })
+
+    assert isinstance(result, list)
+    assert result[0]["url"] == "https://example.com/a"
+
+
 def test_extract_import_error_when_doc_source_missing():
     source = _make_source_with_real_pipeline()
     source._pipeline._fetcher.fetch.return_value = _make_fetch_result()
