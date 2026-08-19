@@ -1,9 +1,11 @@
-from unittest.mock import MagicMock, patch
+from hashlib import sha256
+from unittest.mock import MagicMock
 
 import pytest
 
-from blue_data_web_source.source.web.fetcher import FetchResult
 from blue_data_web_source.source.web.extractor import ExtractResult
+from blue_data_web_source.source.web.fetcher import FetchResult
+from blue_data_web_source.source.web.freshness import MemoryFreshnessStore
 from blue_data_web_source.source.web.pipeline import WebPipeline
 
 
@@ -270,3 +272,129 @@ def test_ingest_chunk_ids_are_unique():
     records = pipeline.ingest("https://example.com")
     chunk_ids = [r["chunk_id"] for r in records]
     assert len(chunk_ids) == len(set(chunk_ids))
+
+
+# ---------------------------------------------------------------------------
+# Freshness tracking
+# ---------------------------------------------------------------------------
+
+def _page_id(url: str = "https://example.com") -> str:
+    return "web_" + sha256(url.encode()).hexdigest()[:16]
+
+
+def test_freshness_first_ingest_writes_store():
+    store = MemoryFreshnessStore()
+    pipeline = _make_pipeline(freshness_store=store)
+    records = pipeline.ingest("https://example.com")
+
+    assert len(records) > 0
+    entry = store.get(_page_id())
+    assert entry is not None
+    assert "content_hash" in entry
+    assert entry["url"] == "https://example.com"
+    assert entry["chunk_count"] == len(records)
+    assert "last_ingested_at" in entry
+    assert "last_checked_at" in entry
+
+
+def test_freshness_unchanged_content_returns_empty():
+    store = MemoryFreshnessStore()
+    pipeline = _make_pipeline(freshness_store=store)
+
+    first = pipeline.ingest("https://example.com")
+    assert len(first) > 0
+
+    second = pipeline.ingest("https://example.com")
+    assert second == []
+
+
+def test_freshness_unchanged_updates_last_checked_not_ingested():
+    store = MemoryFreshnessStore()
+    pipeline = _make_pipeline(freshness_store=store)
+    pipeline.ingest("https://example.com")
+
+    # Backdate last_checked_at so we can verify it gets updated
+    pid = _page_id()
+    old_entry = store.get(pid)
+    original_ingested_at = old_entry["last_ingested_at"]
+    store.set(pid, {**old_entry, "last_checked_at": "2020-01-01T00:00:00+00:00"})
+
+    pipeline.ingest("https://example.com")
+
+    updated = store.get(pid)
+    assert updated["last_ingested_at"] == original_ingested_at
+    assert updated["last_checked_at"] != "2020-01-01T00:00:00+00:00"
+
+
+def test_freshness_changed_content_reingests():
+    store = MemoryFreshnessStore()
+    pipeline = _make_pipeline(freshness_store=store)
+
+    pipeline.ingest("https://example.com")
+    first_hash = store.get(_page_id())["content_hash"]
+
+    pipeline._extractor.extract.return_value = _make_extract_result(
+        text="Completely different content here. " * 30
+    )
+    second = pipeline.ingest("https://example.com")
+
+    assert len(second) > 0
+    assert store.get(_page_id())["content_hash"] != first_hash
+
+
+def test_freshness_changed_content_updates_chunk_count():
+    store = MemoryFreshnessStore()
+    pipeline = _make_pipeline(freshness_store=store)
+    pipeline.ingest("https://example.com")
+
+    # Return more chunks on second ingest
+    pipeline._chunker = MagicMock()
+    pipeline._chunker.chunk_with_titles.return_value = [
+        (None, f"Chunk {i} with unique content token {i * 99}." * 5)
+        for i in range(5)
+    ]
+    pipeline._extractor.extract.return_value = _make_extract_result(
+        text="New content that is definitely different. " * 30
+    )
+    pipeline.ingest("https://example.com")
+
+    assert store.get(_page_id())["chunk_count"] == 5
+
+
+def test_freshness_no_store_reingest_always_processes():
+    pipeline = _make_pipeline()  # no freshness_store
+    first = pipeline.ingest("https://example.com")
+    second = pipeline.ingest("https://example.com")
+    assert len(first) > 0
+    assert len(second) > 0
+
+
+def test_freshness_extractor_returns_none_does_not_write_store():
+    store = MemoryFreshnessStore()
+    pipeline = _make_pipeline(freshness_store=store)
+    pipeline._extractor.extract.return_value = None
+
+    pipeline.ingest("https://example.com")
+    assert store.get(_page_id()) is None
+
+
+def test_freshness_store_keyed_by_final_url_not_original():
+    store = MemoryFreshnessStore()
+    pipeline = _make_pipeline(freshness_store=store)
+    pipeline._fetcher.fetch.return_value = FetchResult(
+        url="https://original.example.com",
+        final_url="https://canonical.example.com",
+        html="<html></html>",
+        status_code=200,
+        content_type="text/html",
+    )
+    pipeline._extractor.extract.return_value = _make_extract_result(
+        url="https://canonical.example.com"
+    )
+
+    pipeline.ingest("https://original.example.com")
+
+    canonical_pid = _page_id("https://canonical.example.com")
+    original_pid = _page_id("https://original.example.com")
+    assert store.get(canonical_pid) is not None
+    assert store.get(original_pid) is None

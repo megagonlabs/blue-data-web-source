@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
@@ -11,6 +12,7 @@ from blue_data_doc_source.source.document.enrichment import Enricher
 
 from .extractor import WebExtractor
 from .fetcher import FetchResult, WebFetcher
+from .freshness import FreshnessStore
 from .record import WebChunkRecord
 
 
@@ -35,6 +37,7 @@ class WebPipeline:
         enricher: Optional[Enricher] = None,
         collection: str = "web",
         timeout: float = 30.0,
+        freshness_store: Optional[FreshnessStore] = None,
     ):
         self._fetcher = WebFetcher(timeout=timeout)
         self._extractor = WebExtractor()
@@ -43,6 +46,7 @@ class WebPipeline:
         self._vector_source = vector_source
         self._enricher = enricher
         self._collection = collection
+        self._freshness_store = freshness_store
 
     def ingest(
         self,
@@ -70,6 +74,17 @@ class WebPipeline:
 
         domain = urlparse(fetch_result.final_url).netloc
         page_id = "web_" + sha256(fetch_result.final_url.encode()).hexdigest()[:16]
+        content_hash = sha256(extract_result.text.strip().encode()).hexdigest()
+
+        if self._freshness_store is not None:
+            stored = self._freshness_store.get(page_id)
+            if stored and stored.get("content_hash") == content_hash:
+                self._freshness_store.set(page_id, {
+                    **stored,
+                    "last_checked_at": datetime.now(timezone.utc).isoformat(),
+                })
+                return []
+
         chunks = self._chunker.chunk_with_titles(extract_result.text)
         records = []
 
@@ -111,6 +126,17 @@ class WebPipeline:
                     doc_id=chunk_id,
                     doc=record_dict,
                 )
+
+        if self._freshness_store is not None:
+            now = datetime.now(timezone.utc).isoformat()
+            self._freshness_store.set(page_id, {
+                "page_id": page_id,
+                "content_hash": content_hash,
+                "url": fetch_result.final_url,
+                "chunk_count": len(records),
+                "last_ingested_at": now,
+                "last_checked_at": now,
+            })
 
         return records
 

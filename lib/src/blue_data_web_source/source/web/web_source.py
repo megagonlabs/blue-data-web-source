@@ -7,6 +7,7 @@ from blue_data.source.vector.vector_source import VectorSource
 from blue_data_doc_source.source.document.embeddings import EmbeddingModel
 from blue_data_doc_source.source.document.enrichment import Enricher
 
+from .freshness import FreshnessStore
 from .pipeline import WebPipeline
 from .search_provider import WebSearchProvider
 
@@ -49,6 +50,7 @@ class WebDataSource(DataSource):
         timeout: float = 30.0,
         nl_model: str = "claude-opus-4-8",
         search_provider: Optional[WebSearchProvider] = None,
+        freshness_store: Optional[FreshnessStore] = None,
         properties: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(name, properties)
@@ -64,6 +66,7 @@ class WebDataSource(DataSource):
             enricher=enricher,
             collection=default_collection,
             timeout=timeout,
+            freshness_store=freshness_store,
         )
 
     def execute_query(self, query, database=None, collection=None, optional_properties=None):
