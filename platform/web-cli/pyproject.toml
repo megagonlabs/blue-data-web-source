@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "blue-data-web-cli"
+version = "0.1.0"
+description = "Command-line interface for blue-data-web-source"
+requires-python = ">=3.10"
+dependencies = [
+    "blue-data-web-source>=0.1.0",
+    "click>=8.0",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.0.0"]
+redis  = ["redis[hiredis]>=4.5.0"]
+dev    = ["pytest"]
+
+[project.scripts]
+blue-web = "blue_data_web_cli.main:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
