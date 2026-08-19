@@ -2,7 +2,7 @@
 
 Web pages are live data — they update on a schedule, appear through feeds, and belong alongside SQL tables, documents, and graph stores in an agent's data layer. `blue-data-web-source` handles the full pipeline from URL to queryable vector index, with freshness tracking that makes incremental updates cheap and feed subscription that makes scheduled monitoring automatic. It plugs into blue-data's `DataRegistry` so web content becomes a first-class member of the same intelligence layer as the rest of your data.
 
-→ **[Installation](#installation)** · **[Ops reference](#ops-reference)** · **[Architecture](#architecture)** · **[Testing](#running-tests)**
+→ **[Full feature list](docs/features.md)** · **[Installation](#installation)** · **[Ops reference](#ops-reference)** · **[Architecture](#architecture)** · **[MCP server](docs/mcp.md)** · **[Testing](#running-tests)**
 
 ---
 

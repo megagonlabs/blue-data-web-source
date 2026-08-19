@@ -5,8 +5,8 @@
 Fetch, extract, chunk, enrich, embed, and upsert in a single `WEB.INGEST` call. Handles redirect following, non-2xx errors, and pages with no extractable content automatically — callers never see partial or empty chunks in the vector store.
 
 ```python
-from blue_web_source import WebDataSource
-from blue_doc_source.source.document.embeddings import OpenAIEmbeddingModel
+from blue_data_web_source import WebDataSource
+from blue_data_doc_source.source.document.embeddings import OpenAIEmbeddingModel
 from blue_data.source.vector.memory_vector_source import MemoryVectorSource
 
 source = WebDataSource(
@@ -46,7 +46,7 @@ After trafilatura runs, a post-processing pass strips inline CMS navigation frag
 | `Story continues` | `Story continues below advertisement` |
 
 ```python
-from blue_web_source.source.web.extractor import WebExtractor
+from blue_data_web_source.source.web.extractor import WebExtractor
 
 extractor = WebExtractor()
 result = extractor.extract(html, url="https://news.example.com/article")
@@ -122,8 +122,8 @@ Recognised header patterns:
 - Underlined: `Title\n======`
 
 ```python
-from blue_web_source import WebDataSource
-from blue_doc_source.source.document.enrichment import BasicEnricher
+from blue_data_web_source import WebDataSource
+from blue_data_doc_source.source.document.enrichment import BasicEnricher
 
 source = WebDataSource(
     name="docs",
@@ -155,7 +155,7 @@ Extracted entity types:
 - **PROPER_NOUN** — capitalised multi-word phrases
 
 ```python
-from blue_doc_source.source.document.enrichment import BasicEnricher
+from blue_data_doc_source.source.document.enrichment import BasicEnricher
 
 enricher = BasicEnricher()
 result = enricher.enrich(
@@ -181,7 +181,7 @@ Pass `enricher=BasicEnricher()` to `WebDataSource` to attach enrichment to every
 Ships with `OpenAIEmbeddingModel` and `DummyEmbeddingModel` from `blue-data-doc-source`. Any `EmbeddingModel` subclass works — swap without changing the pipeline.
 
 ```python
-from blue_doc_source.source.document.embeddings import OpenAIEmbeddingModel, DummyEmbeddingModel
+from blue_data_doc_source.source.document.embeddings import OpenAIEmbeddingModel, DummyEmbeddingModel
 
 # Production — calls OpenAI text-embedding-3-small (1536-dim)
 model = OpenAIEmbeddingModel(model="text-embedding-3-small")
@@ -195,7 +195,7 @@ print(model.dim)  # 8
 Bring your own model by subclassing `EmbeddingModel`:
 
 ```python
-from blue_doc_source.source.document.embeddings import EmbeddingModel
+from blue_data_doc_source.source.document.embeddings import EmbeddingModel
 
 class MyModel(EmbeddingModel):
     @property
@@ -302,12 +302,76 @@ Crawler behaviour:
 
 ---
 
+## RSS/Atom feed subscription
+
+`WEB.INGEST_FEED` fetches an RSS or Atom feed, parses all entries, and ingests each article URL in one call. Entries are filtered by published date before any HTTP fetch, so stale articles are never re-downloaded.
+
+```python
+from datetime import datetime, timezone
+
+# Ingest everything published after a cutoff — skips older entries before fetching
+results = source.execute_query({
+    "op": "WEB.INGEST_FEED",
+    "url": "https://example.com/feed.xml",
+    "since": "2026-08-10T00:00:00Z",  # ISO 8601; Z and +00:00 both accepted
+    "max_entries": 20,                 # cap after date filtering
+    "collection": "news",
+})
+
+print(f"Ingested {len(results)} chunks from feed")
+```
+
+Feed behaviour:
+- Supports both RSS 2.0 (`<pubDate>`) and Atom (`<published>` / `<updated>`)
+- `since` filters entries by published date **before** any HTTP fetch — entries without a date always pass through
+- `max_entries` caps the number of articles processed after date filtering
+- Articles that fail to fetch or yield no extractable content are skipped silently — the pipeline continues
+- Requires `pip install 'blue-data-web-source[feed]'` for `feedparser`
+
+---
+
+## Freshness tracking
+
+`FileFreshnessStore` tracks the content hash and last-ingest time for every URL. Skip re-ingesting pages that haven't changed; only download and re-embed pages that have been updated.
+
+```python
+from blue_data_web_source.source.web.freshness import FileFreshnessStore
+
+store = FileFreshnessStore(".freshness_cache")
+
+source = WebDataSource(
+    name="news",
+    embedding_model=OpenAIEmbeddingModel(),
+    vector_source=vector_store,
+    freshness_store=store,
+)
+
+# First run — fetches and embeds all pages
+results = source.execute_query({"op": "WEB.INGEST", "url": "https://example.com/article"})
+
+# Second run — page hasn't changed: skip fetch, return []
+results = source.execute_query({"op": "WEB.INGEST", "url": "https://example.com/article"})
+assert results == []  # no re-embedding, no vector store write
+
+# Compose with WEB.INGEST_FEED for incremental daily updates
+results = source.execute_query({
+    "op": "WEB.INGEST_FEED",
+    "url": "https://example.com/feed.xml",
+    "since": "2026-08-17T00:00:00Z",
+})
+# Only new or changed articles are fetched and embedded
+```
+
+Freshness check uses a SHA-256 hash of the raw HTTP response body — byte-level change detection, not timestamp-based. The cache file is a plain JSON file, portable and inspectable.
+
+---
+
 ## Search-augmented ingestion
 
 `WEB.SEARCH_WEB` takes a natural language query, calls a web search API (Tavily by default), fetches and ingests the top-k result pages on the fly, and returns semantically ranked chunks — no pre-ingestion required. The search backend is pluggable via the `WebSearchProvider` ABC.
 
 ```python
-from blue_web_source.source.web.search_provider import TavilySearchProvider
+from blue_data_web_source.source.web.search_provider import TavilySearchProvider
 
 source = WebDataSource(
     name="live-search",
@@ -331,7 +395,7 @@ for r in results:
 Plug in any search backend by subclassing `WebSearchProvider`:
 
 ```python
-from blue_web_source.source.web.search_provider import WebSearchProvider
+from blue_data_web_source.source.web.search_provider import WebSearchProvider
 
 class MySearchProvider(WebSearchProvider):
     def search(self, query: str, k: int) -> list[str]:
@@ -358,19 +422,20 @@ records = source.execute_query_nl("ingest https://example.com/report")
 source.execute_query_nl("ensure the index exists for collection news")
 ```
 
-The NL interface uses Claude tool use with `tool_choice={"type": "any"}` — a tool call is always returned, never free text. Three tools are exposed: `search`, `ingest_url`, `ensure_index`.
+The NL interface uses Claude tool use with `tool_choice={"type": "any"}` — a tool call is always returned, never free text. Six tools are exposed: `search`, `ingest_url`, `ingest_urls`, `crawl`, `ensure_index`, `ingest_feed`.
 
 ---
 
 ## Simple op interface
 
-Five operations — consistent with Blue's query model:
+Six operations — consistent with Blue's query model:
 
 | Op | Required | Optional | Returns |
 |---|---|---|---|
 | `WEB.ENSURE_INDEX` | — | `collection` | `None` |
 | `WEB.INGEST` | `url` or `urls` | `collection` | `list[dict]` |
 | `WEB.CRAWL` | `url` | `depth`(1), `max_pages`(10), `same_domain_only`(True), `collection` | `list[dict]` |
+| `WEB.INGEST_FEED` | `url` | `since` (ISO 8601), `max_entries`, `collection` | `list[dict]` |
 | `WEB.SEARCH` | `query` | `k`(5), `collection` | `list[dict]` |
 | `WEB.SEARCH_WEB` | `query` | `k`(5), `collection` | `list[dict]` |
 
