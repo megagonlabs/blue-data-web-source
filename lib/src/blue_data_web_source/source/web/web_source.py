@@ -21,6 +21,7 @@ class WebDataSource(DataSource):
     Supported ops:
 
     - ``WEB.INGEST`` — fetch, extract, chunk, embed, and upsert one URL (``url``) or multiple (``urls``)
+    - ``WEB.INGEST_FEED`` — fetch an RSS/Atom feed and ingest each article; optional ``max_items``
     - ``WEB.CRAWL`` — BFS crawl from a seed URL; configurable ``depth`` and ``max_pages``
     - ``WEB.SEARCH_WEB`` — search the web, ingest top-k pages on the fly, return ranked chunks
     - ``WEB.SEARCH`` — embed a query and return matching chunks via KNN
@@ -74,6 +75,8 @@ class WebDataSource(DataSource):
 
         if op == "WEB.INGEST":
             return self._ingest(query, collection)
+        elif op == "WEB.INGEST_FEED":
+            return self._ingest_feed(query, collection)
         elif op == "WEB.CRAWL":
             return self._crawl(query, collection)
         elif op == "WEB.SEARCH_WEB":
@@ -85,7 +88,8 @@ class WebDataSource(DataSource):
         else:
             raise ValueError(
                 f"Unsupported op: {op!r}. "
-                "Expected WEB.INGEST, WEB.CRAWL, WEB.SEARCH_WEB, WEB.SEARCH, or WEB.ENSURE_INDEX"
+                "Expected WEB.INGEST, WEB.INGEST_FEED, WEB.CRAWL, WEB.SEARCH_WEB, "
+                "WEB.SEARCH, or WEB.ENSURE_INDEX"
             )
 
     def _ingest(self, request: Dict[str, Any], collection_override=None) -> List[Dict[str, Any]]:
@@ -99,6 +103,14 @@ class WebDataSource(DataSource):
         for u in targets:
             results.extend(self._pipeline.ingest(u, collection=collection))
         return results
+
+    def _ingest_feed(self, request: Dict[str, Any], collection_override=None) -> List[Dict[str, Any]]:
+        url = request.get("url")
+        if not url:
+            raise ValueError("WEB.INGEST_FEED requires a 'url' field")
+        collection = collection_override or request.get("collection")
+        max_items = request.get("max_items")
+        return self._pipeline.ingest_feed(url, max_items=max_items, collection=collection)
 
     def _search(self, request: Dict[str, Any], collection_override=None) -> List[Dict[str, Any]]:
         query_text = request.get("query")

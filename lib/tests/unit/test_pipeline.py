@@ -1,12 +1,26 @@
 from hashlib import sha256
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from blue_data_web_source.source.web.extractor import ExtractResult
+from blue_data_web_source.source.web.feed import FeedEntry, FeedParseResult
 from blue_data_web_source.source.web.fetcher import FetchResult
 from blue_data_web_source.source.web.freshness import MemoryFreshnessStore
 from blue_data_web_source.source.web.pipeline import WebPipeline
+
+_FEED_URL = "https://example.com/feed.xml"
+
+
+def _make_feed_result(n: int = 2) -> FeedParseResult:
+    return FeedParseResult(
+        feed_url=_FEED_URL,
+        feed_title="Test Feed",
+        entries=[
+            FeedEntry(url=f"https://example.com/article-{i}", title=f"Article {i}")
+            for i in range(n)
+        ],
+    )
 
 
 def _make_fetch_result(url: str = "https://example.com") -> FetchResult:
@@ -376,6 +390,75 @@ def test_freshness_extractor_returns_none_does_not_write_store():
 
     pipeline.ingest("https://example.com")
     assert store.get(_page_id()) is None
+
+
+# ---------------------------------------------------------------------------
+# Feed ingestion
+# ---------------------------------------------------------------------------
+
+
+def test_ingest_feed_ingests_each_article():
+    pipeline = _make_pipeline()
+    with patch("blue_data_web_source.source.web.feed.FeedParser") as MockParser:
+        MockParser.return_value.parse.return_value = _make_feed_result(2)
+        chunks = pipeline.ingest_feed(_FEED_URL)
+    assert len(chunks) > 0
+
+
+def test_ingest_feed_max_items_caps_articles():
+    pipeline = _make_pipeline()
+    with patch("blue_data_web_source.source.web.feed.FeedParser") as MockParser:
+        MockParser.return_value.parse.return_value = _make_feed_result(3)
+        pipeline.ingest_feed(_FEED_URL, max_items=1)
+    # 1 call for the feed + 1 for the single article (not 3)
+    assert pipeline._fetcher.fetch.call_count == 2
+
+
+def test_ingest_feed_empty_feed_returns_empty():
+    pipeline = _make_pipeline()
+    with patch("blue_data_web_source.source.web.feed.FeedParser") as MockParser:
+        MockParser.return_value.parse.return_value = FeedParseResult(
+            feed_url=_FEED_URL, feed_title=None, entries=[]
+        )
+        chunks = pipeline.ingest_feed(_FEED_URL)
+    assert chunks == []
+
+
+def test_ingest_feed_article_with_no_content_skipped():
+    pipeline = _make_pipeline()
+    pipeline._extractor.extract.side_effect = [None, _make_extract_result()]
+    with patch("blue_data_web_source.source.web.feed.FeedParser") as MockParser:
+        MockParser.return_value.parse.return_value = _make_feed_result(2)
+        chunks = pipeline.ingest_feed(_FEED_URL)
+    assert len(chunks) > 0
+
+
+def test_ingest_feed_passes_collection():
+    pipeline = _make_pipeline()
+    pipeline._embedding_model = MagicMock()
+    pipeline._embedding_model.embed_text.return_value = [0.1] * 4
+    mock_vs = MagicMock()
+    pipeline._vector_source = mock_vs
+
+    with patch("blue_data_web_source.source.web.feed.FeedParser") as MockParser:
+        MockParser.return_value.parse.return_value = _make_feed_result(1)
+        pipeline.ingest_feed(_FEED_URL, collection="blog")
+
+    upsert_collections = [kw["collection"] for _, kw in mock_vs.upsert.call_args_list]
+    assert all(c == "blog" for c in upsert_collections)
+
+
+def test_ingest_feed_composes_with_freshness():
+    store = MemoryFreshnessStore()
+    pipeline = _make_pipeline(freshness_store=store)
+
+    with patch("blue_data_web_source.source.web.feed.FeedParser") as MockParser:
+        MockParser.return_value.parse.return_value = _make_feed_result(1)
+        first = pipeline.ingest_feed(_FEED_URL)
+        second = pipeline.ingest_feed(_FEED_URL)
+
+    assert len(first) > 0
+    assert second == []
 
 
 def test_freshness_store_keyed_by_final_url_not_original():

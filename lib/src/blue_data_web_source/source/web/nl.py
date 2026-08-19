@@ -120,6 +120,33 @@ class NLQueryParser:
                 "required": ["query"],
             },
         },
+        {
+            "name": "ingest_feed",
+            "description": (
+                "Fetch an RSS or Atom feed and ingest all articles into the knowledge base. "
+                "Use this when the user provides a feed URL or wants to subscribe to a news "
+                "feed, blog, or podcast. If a freshness store is configured, articles whose "
+                "content has not changed since the last ingest are skipped automatically."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The RSS or Atom feed URL.",
+                    },
+                    "max_items": {
+                        "type": "integer",
+                        "description": "Maximum number of articles to ingest. Omit to ingest all.",
+                    },
+                    "collection": {
+                        "type": "string",
+                        "description": "Optional collection to store the articles in.",
+                    },
+                },
+                "required": ["url"],
+            },
+        },
     ]
 
     def __init__(self, model: str = "claude-opus-4-8", client=None):
@@ -197,6 +224,13 @@ class NLQueryParser:
                 op["k"] = args["k"]
             if "top_k" in args:
                 op["top_k"] = args["top_k"]
+            if "collection" in args:
+                op["collection"] = args["collection"]
+            return op
+        if tool_name == "ingest_feed":
+            op = {"op": "WEB.INGEST_FEED", "url": args["url"]}
+            if "max_items" in args:
+                op["max_items"] = args["max_items"]
             if "collection" in args:
                 op["collection"] = args["collection"]
             return op

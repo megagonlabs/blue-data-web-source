@@ -260,5 +260,41 @@ def search_web(
         return json.dumps({"error": f"Search web failed: {exc}"})
 
 
+@mcp.tool()
+def ingest_feed(
+    url: str,
+    max_items: Optional[int] = None,
+    collection: str = "web",
+) -> str:
+    """Fetch an RSS or Atom feed and ingest all articles.
+
+    Parses the feed, fetches each article URL, extracts its main content,
+    and stores it as searchable chunks. Articles that fail to load are skipped.
+
+    When a freshness store is configured, articles whose content has not changed
+    since the last call are skipped without re-embedding — making repeated calls
+    cheap for monitoring feeds on a schedule.
+
+    Returns the total chunk count and list of ingested article URLs.
+
+    Requires: pip install 'blue-data-web-source[feed]'
+    """
+    try:
+        source = _get_source()
+        request: dict = {"op": "WEB.INGEST_FEED", "url": url, "collection": collection}
+        if max_items is not None:
+            request["max_items"] = max_items
+        records = source.execute_query(request)
+        ingested_urls = sorted({r["url"] for r in records})
+        return json.dumps({
+            "chunk_count": len(records),
+            "articles_ingested": len(ingested_urls),
+            "urls": ingested_urls,
+            "collection": collection,
+        })
+    except Exception as exc:
+        return json.dumps({"error": f"Feed ingest failed: {exc}"})
+
+
 if __name__ == "__main__":
     mcp.run()

@@ -140,6 +140,49 @@ class WebPipeline:
 
         return records
 
+    def ingest_feed(
+        self,
+        url: str,
+        max_items: Optional[int] = None,
+        collection: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Fetch an RSS or Atom feed and ingest each article.
+
+        Fetches the feed XML using the same ``WebFetcher`` as page ingestion,
+        then calls ``ingest()`` on each article URL. Articles that fail to fetch
+        or yield no content are silently skipped.
+
+        Composes naturally with freshness tracking: if a ``freshness_store`` is
+        set, articles whose content has not changed since the last ingest return
+        no chunks without re-embedding.
+
+        Args:
+            url: RSS or Atom feed URL.
+            max_items: Cap on articles to process. ``None`` processes all entries.
+            collection: Override the instance-level collection for this call only.
+
+        Returns:
+            Flat list of chunk dicts from all successfully ingested articles.
+        """
+        from .feed import FeedParser
+
+        fetch_result = self._fetcher.fetch(url)
+        parsed = FeedParser().parse(fetch_result.html, url)
+
+        entries = parsed.entries
+        if max_items is not None:
+            entries = entries[:max_items]
+
+        results: List[Dict[str, Any]] = []
+        for entry in entries:
+            try:
+                chunks = self.ingest(entry.url, collection=collection)
+                results.extend(chunks)
+            except Exception:
+                pass
+
+        return results
+
     def search(self, query: str, k: int = 5, collection: Optional[str] = None) -> List[Dict[str, Any]]:
         """Embed a query and return the k nearest chunks from the vector store.
 
