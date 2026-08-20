@@ -13,9 +13,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-openai = ["openai>=1.0.0"]
-redis  = ["redis[hiredis]>=4.5.0"]
-dev    = ["pytest"]
+openai  = ["openai>=1.0.0"]
+redis   = ["redis[hiredis]>=4.5.0"]
+dev     = ["pytest", "pytest-cov"]
+all     = ["openai>=1.0.0", "redis[hiredis]>=4.5.0"]
 
 [project.scripts]
 blue-web = "blue_data_web_cli.main:cli"

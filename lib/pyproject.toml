@@ -5,20 +5,28 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "blue-data-web-source"
 version = "0.1.0"
+description = "Web and feed data source for Blue Data Intelligence"
 requires-python = ">=3.10"
 dependencies = [
-    "blue-data>=0.1.0",
-    "blue-data-doc-source>=0.1.0",
+    "blue-data @ file:../../blue-data",
+    "blue-data-doc-source @ file:../../blue-data-doc-source",
     "httpx>=0.27.0",
     "trafilatura>=1.9.0",
 ]
 
 [project.optional-dependencies]
-openai = ["openai>=1.0.0"]
-redis = ["redis[hiredis]>=4.5.0"]
-nl = ["anthropic>=0.40.0"]
-feed = ["feedparser>=6.0.0"]
-dev = ["pytest", "pytest-cov", "pytest-httpx", "feedparser>=6.0.0"]
+openai  = ["openai>=1.0.0"]
+redis   = ["redis[hiredis]>=4.5.0"]
+llm     = ["anthropic>=0.40.0"]
+feed    = ["feedparser>=6.0.0"]
+dev     = ["pytest", "pytest-cov", "pytest-httpx", "feedparser>=6.0.0"]
+all     = ["openai>=1.0.0", "redis[hiredis]>=4.5.0", "anthropic>=0.40.0", "feedparser>=6.0.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["lib/tests/unit"]
+markers = [
+    "integration: end-to-end tests requiring external services (Redis, network)",
+]
