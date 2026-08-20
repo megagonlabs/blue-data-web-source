@@ -10,8 +10,8 @@ Orchestrates the full web ingestion chain: fetch → extract → strip nav fragm
 
 ```python
 WebPipeline(
-    chunk_size: int = 500,
-    overlap: int = 100,
+    chunk_size: int = 1000,
+    overlap: int = 150,
     chunker: Chunker | None = None,
     embedding_model: EmbeddingModel | None = None,
     vector_source: VectorSource | None = None,
@@ -69,7 +69,7 @@ WebDataSource(
 |----|-----------------|-----------------|---------|
 | `WEB.INGEST` | `url` OR `urls` | `collection` | `list[dict]` — one dict per chunk across all ingested pages |
 | `WEB.EXTRACT` | (`url` OR `urls`) + `schema` | — | `dict` (single URL) or `list[dict]` (multiple URLs) — extracted fields |
-| `WEB.CRAWL` | `url` | `depth` (default 2), `max_pages` (default 50), `same_domain_only` (default True), `collection` | `list[dict]` — flat chunk list from all crawled pages |
+| `WEB.CRAWL` | `url` | `depth` (default 1), `max_pages` (default 10), `same_domain_only` (default True), `collection` | `list[dict]` — flat chunk list from all crawled pages |
 | `WEB.SEARCH_WEB` | `query` | `k` (search result URLs, default 5), `top_k` (returned chunks, default 3), `collection` | `list[dict]` — semantically ranked chunks |
 | `WEB.SEARCH` | `query` | `k` (default 5), `collection` | `list[dict]` — ranked chunks from local index |
 | `WEB.INGEST_FEED` | `url` | `since` (ISO 8601), `max_entries`, `collection` | `list[dict]` — chunks from all ingested feed articles |
@@ -173,7 +173,7 @@ URL deduplication strips fragments before queuing — `https://example.com/page#
 ### Key method
 
 ```python
-def crawl(self, seed_url: str, depth: int = 2, max_pages: int = 50) -> list[dict]: ...
+def crawl(self, seed_url: str, depth: int = 1, max_pages: int = 10) -> list[dict]: ...
 ```
 
 Returns a flat list of chunk records from all successfully ingested pages.

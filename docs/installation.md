@@ -6,6 +6,8 @@
 |-----------|------|-------------|
 | Library | `lib/` | `blue_data_web_source` importable package |
 | MCP server | `platform/web-mcp/` | Expose web ops as MCP tools for Claude Desktop |
+| CLI | `platform/web-cli/` | Command-line interface for all web ops |
+| REST API | `platform/web-api/` | FastAPI service exposing web ops over HTTP (port 8002) |
 
 ---
 

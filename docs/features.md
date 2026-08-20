@@ -496,7 +496,7 @@ records = source.execute_query_nl("ingest https://example.com/report")
 source.execute_query_nl("ensure the index exists for collection news")
 ```
 
-The NL interface uses Claude tool use with `tool_choice={"type": "any"}` — a tool call is always returned, never free text. Six tools are exposed: `search`, `ingest_url`, `ingest_urls`, `crawl`, `ensure_index`, `ingest_feed`.
+The NL interface uses Claude tool use with `tool_choice={"type": "any"}` — a tool call is always returned, never free text. Six tools are exposed: `ingest_url`, `search`, `ensure_index`, `crawl`, `search_web`, `ingest_feed`.
 
 ---
 
@@ -512,6 +512,6 @@ Six operations — consistent with Blue's query model:
 | `WEB.CRAWL` | `url` | `depth`(1), `max_pages`(10), `same_domain_only`(True), `collection` | `list[dict]` |
 | `WEB.INGEST_FEED` | `url` | `since` (ISO 8601), `max_entries`, `collection` | `list[dict]` |
 | `WEB.SEARCH` | `query` | `k`(5), `collection` | `list[dict]` |
-| `WEB.SEARCH_WEB` | `query` | `k`(5), `collection` | `list[dict]` |
+| `WEB.SEARCH_WEB` | `query` | `k`(5), `top_k`(=k), `collection` | `list[dict]` |
 
 All ops are dispatched via `WebDataSource.execute_query(op_dict)`. Natural language dispatch is available via `execute_query_nl(text, collection)`.

@@ -131,7 +131,9 @@ blue-data-web-source/
 │   ├── src/blue_data_web_source/
 │   └── tests/
 ├── platform/
-│   └── web-mcp/                      # MCP server for web operations
+│   ├── web-mcp/                      # MCP server for web operations
+│   ├── web-cli/                      # Command-line interface for all web ops
+│   └── web-api/                      # FastAPI REST API (port 8002)
 ├── docs/
 ├── data/
 │   └── fixtures/                     # Saved HTML fixtures for integration tests

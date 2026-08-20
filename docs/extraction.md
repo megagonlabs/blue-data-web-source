@@ -13,7 +13,7 @@ The extraction layer converts raw HTML into clean article text and structured me
 Returns `None` when no main content body is extractable. The pipeline returns `[]` in this case — nothing is stored.
 
 ```python
-from blue_web_source.source.web.extractor import WebExtractor
+from blue_data_web_source.source.web.extractor import WebExtractor
 
 extractor = WebExtractor()
 result = extractor.extract(html, url="https://news.example.com/article")
@@ -102,8 +102,8 @@ When `extract()` returns `None`, `WebPipeline.ingest()` returns `[]` immediately
 To verify why a specific URL produces no output:
 
 ```python
-from blue_web_source.source.web.fetcher import WebFetcher
-from blue_web_source.source.web.extractor import WebExtractor
+from blue_data_web_source.source.web.fetcher import WebFetcher
+from blue_data_web_source.source.web.extractor import WebExtractor
 
 fetcher   = WebFetcher()
 extractor = WebExtractor()

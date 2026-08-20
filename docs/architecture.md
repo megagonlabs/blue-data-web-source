@@ -113,7 +113,7 @@ Key behaviour:
 - Default timeout: **30 seconds** — necessary for news sites with slow SSL handshakes
 
 ```python
-from blue_web_source.source.web.fetcher import WebFetcher
+from blue_data_web_source.source.web.fetcher import WebFetcher
 
 fetcher = WebFetcher(timeout=30.0)
 result = fetcher.fetch("https://example.com/article")
@@ -225,10 +225,10 @@ These components are imported directly — not reimplemented:
 
 | Component | Import |
 |---|---|
-| `SectionChunker`, `WindowChunker` | `blue_doc_source.source.document.chunkers` |
-| `BasicEnricher` | `blue_doc_source.source.document.enrichment` |
-| `OpenAIEmbeddingModel`, `DummyEmbeddingModel` | `blue_doc_source.source.document.embeddings` |
-| `EmbeddingModel` ABC | `blue_doc_source.source.document.embeddings` |
+| `SectionChunker`, `WindowChunker` | `blue_data_doc_source.source.document.chunkers` |
+| `BasicEnricher` | `blue_data_doc_source.source.document.enrichment` |
+| `OpenAIEmbeddingModel`, `DummyEmbeddingModel` | `blue_data_doc_source.source.document.embeddings` |
+| `EmbeddingModel` ABC | `blue_data_doc_source.source.document.embeddings` |
 
 This means chunking behaviour, enrichment output, and embedding models are identical across doc-source and web-source — chunks from both sources are comparable and can coexist in the same vector collection.
 

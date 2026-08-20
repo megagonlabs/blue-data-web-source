@@ -100,7 +100,7 @@ records = source.execute_query({
 `WEB.SEARCH_WEB` takes a natural language query, calls a web search API to find relevant URLs, fetches and ingests the top results on the fly, and returns semantically ranked chunks. No prior ingestion step is required.
 
 ```python
-from blue_web_source.source.web.search_provider import TavilySearchProvider
+from blue_data_web_source.source.web.search_provider import TavilySearchProvider
 
 source = WebDataSource(
     name="live-search",
@@ -148,7 +148,7 @@ export TAVILY_API_KEY=tvly-...
 ```
 
 ```python
-from blue_web_source.source.web.search_provider import TavilySearchProvider
+from blue_data_web_source.source.web.search_provider import TavilySearchProvider
 
 provider = TavilySearchProvider()
 urls = provider.search("climate policy EU 2026", k=5)
@@ -162,7 +162,7 @@ Tavily returns URLs pre-ranked by relevance. The ingestion pipeline processes th
 Plug in any search backend by subclassing `WebSearchProvider`:
 
 ```python
-from blue_web_source.source.web.search_provider import WebSearchProvider
+from blue_data_web_source.source.web.search_provider import WebSearchProvider
 
 class MySearchProvider(WebSearchProvider):
     def search(self, query: str, k: int) -> list[str]:
@@ -199,7 +199,7 @@ Use `WEB.SEARCH_WEB` when you need current information or don't have a curated U
 `WebCrawler` is instantiated by `WebDataSource` and reuses the same `WebPipeline` instance as direct `WEB.INGEST` calls.
 
 ```python
-from blue_web_source.source.web.crawler import WebCrawler
+from blue_data_web_source.source.web.crawler import WebCrawler
 
 crawler = WebCrawler(pipeline=pipeline)
 records = crawler.crawl(

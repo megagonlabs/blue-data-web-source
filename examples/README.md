@@ -132,7 +132,7 @@ All operations are dispatched via `WebDataSource.execute_query(op_dict)`.
 
 | Op | Required fields | Optional | Returns |
 |---|---|---|---|
-| `WEB.ENSURE_INDEX` | `collection` | — | `None` |
+| `WEB.ENSURE_INDEX` | — | `collection` | `None` |
 | `WEB.INGEST` | `url` or `urls` (list) | `collection` | `list[dict]` (WebChunkRecord) |
 | `WEB.EXTRACT` | (`url` or `urls`) + `schema` | — | `dict` or `list[dict]` |
 | `WEB.CRAWL` | `url` | `collection`, `depth`(1), `max_pages`(10), `same_domain_only`(True) | `list[dict]` |

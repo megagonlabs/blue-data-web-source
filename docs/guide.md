@@ -131,7 +131,7 @@ results = source.execute_query({
 })
 ```
 
-Requires `pip install 'blue-data-web-source[nl]'` and `TAVILY_API_KEY`.
+Requires `pip install tavily-python` and `TAVILY_API_KEY`.
 
 ---
 
