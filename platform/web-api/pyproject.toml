@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "blue-data-web-api"
+version = "0.1.0"
+description = "REST API for blue-data-web-source"
+requires-python = ">=3.10"
+dependencies = [
+    "blue-data-web-source>=0.1.0",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.0.0"]
+redis  = ["redis[hiredis]>=4.5.0"]
+feed   = ["feedparser>=6.0.0"]
+dev    = ["pytest", "httpx"]
+
+[project.scripts]
+blue-data-web-api = "web_api.main:run"
+
+[tool.setuptools.packages.find]
+where = ["src"]
