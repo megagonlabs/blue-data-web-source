@@ -8,7 +8,7 @@ Web pages are live data — they update on a schedule, appear through feeds, and
 
 ## Why blue-data-web-source
 
-The genuine differentiator is not any single feature — it is the combination: content-addressed freshness tracking, feed subscription with date-based filtering, a live-search-then-ingest op, and DataRegistry integration. Together these make web content an updatable, queryable part of an agent's data layer rather than a point-in-time scrape that goes stale immediately.
+Most web ingestion tools solve one problem at a time: fetch a URL, parse a feed, or run a search. Composing them into a live, updatable data source — one that skips unchanged content on every run, monitors feeds by publication date, searches and ingests in one call, and sits alongside SQL and document sources in the same registry — requires glue code you write yourself. `blue-data-web-source` is that composition pre-built, with a consistent chunk schema across all entry points and freshness tracking built into the ingest path rather than bolted on separately.
 
 **Failure 1 — Re-embedding 500 pages when 480 haven't changed**
 
@@ -32,7 +32,7 @@ source.execute_query({"op": "WEB.INGEST", "urls": article_urls, "collection": "n
 source.execute_query({"op": "WEB.INGEST", "urls": article_urls, "collection": "news"})
 ```
 
-`last_checked_at` updates on every run; `last_ingested_at` updates only when content changes. LangChain's web loaders and LlamaIndex readers are stateless — they re-process everything every call.
+`last_checked_at` updates on every run; `last_ingested_at` updates only when content changes. This is page-level deduplication — if a page's extracted text changes, the full page is re-processed. LangChain's basic web loaders and LlamaIndex's readers are stateless on their own — they re-process everything every call. LangChain does ship a separate Indexing API (`langchain_core.indexing`) with a `RecordManager` for hash-based dedup, and LlamaIndex has an analogous `IngestionPipeline` with a docstore — but both require separate configuration wired alongside a loader. In `blue-data-web-source`, freshness tracking is built directly into `WEB.INGEST`.
 
 **Failure 2 — Monitoring a blog means crawling the whole site or maintaining a URL list**
 
@@ -60,13 +60,13 @@ source.execute_query({
 })
 ```
 
-Entries without a publication date are always included — they pass the `since` filter regardless of the cutoff. LangChain's `RSSFeedLoader` and LlamaIndex's `RssReader` re-load all entries on every call with no date filtering.
+Entries without a publication date are always included — they pass the `since` filter regardless of the cutoff. LangChain's `RSSFeedLoader` and LlamaIndex's `RssReader` re-load all entries on every call; date-based cutoffs require application-level filtering on top of the loader.
 
 **Failure 3 — Live web search gives you URLs; you still have to fetch, extract, embed, and rank them**
 
-An agent needs current information on a topic. It calls a search API, gets 10 URLs, then must fetch each page, strip boilerplate, chunk the text, embed each chunk, and rank by relevance to the original query. That is 50+ lines of integration code before a single result comes back — and it needs timeout handling, failed-fetch recovery, and deduplication on top.
+An agent needs current information on a topic. It calls a search API and gets back URLs. Getting from those URLs to ranked, queryable chunks requires wiring: fetch each page with timeout handling, strip boilerplate, chunk the text, embed each chunk, rank by relevance to the original query, and deduplicate against content already in the index. Each of those steps is a separate concern that needs to compose correctly.
 
-`WEB.SEARCH_WEB` does this in one call: search API → fetch and extract each result → chunk and embed → semantic rank → return chunks.
+`WEB.SEARCH_WEB` does this in one call: search API → fetch and extract each result → chunk and embed → semantic rank → return chunks. Re-running the same query does not re-fetch already-ingested pages — freshness dedup means pages already in the index are skipped, so repeated queries are cheap.
 
 ```python
 results = source.execute_query({
@@ -79,8 +79,6 @@ results = source.execute_query({
 for r in results:
     print(r["url"], r["text"][:120])
 ```
-
-Re-running the same query does not re-fetch already-ingested pages. URL-hash deduplication means the same final URL always maps to the same chunk IDs — re-running is a safe upsert.
 
 **The integration story: web content alongside your other data**
 
