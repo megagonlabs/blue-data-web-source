@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 
 def _utcnow() -> str:
@@ -24,7 +24,10 @@ class WebChunkRecord:
     collection: Optional[str] = None
     section_title: Optional[str] = None
     fetch_timestamp: str = field(default_factory=_utcnow)
+    page_id: Optional[str] = None
     embedding: Optional[List[float]] = None
+    entities: List[Dict[str, Any]] = field(default_factory=list)
+    semantic_hints: Dict[str, Any] = field(default_factory=dict)
     # Structured metadata from JSON-LD / OpenGraph
     schema_type: Optional[str] = None
     keywords: Optional[List[str]] = None
@@ -40,6 +43,8 @@ class WebChunkRecord:
             "text": self.text,
             "fetch_timestamp": self.fetch_timestamp,
         }
+        if self.page_id is not None:
+            d["page_id"] = self.page_id
         for key in (
             "title",
             "author",
@@ -57,6 +62,10 @@ class WebChunkRecord:
                 d[key] = val
         if self.keywords:
             d["keywords"] = self.keywords
+        if self.entities:
+            d["entities"] = self.entities
+        if self.semantic_hints:
+            d["semantic_hints"] = self.semantic_hints
         if self.embedding is not None:
             d["embedding"] = self.embedding
         return d

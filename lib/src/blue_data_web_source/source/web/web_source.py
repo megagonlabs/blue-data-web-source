@@ -7,6 +7,8 @@ from blue_data.source.source import DataSource
 from blue_data.source.vector.vector_source import VectorSource
 from blue_data_doc_source.source.document.embeddings import EmbeddingModel
 from blue_data_doc_source.source.document.enrichment import Enricher
+from blue_data_doc_source.source.document.schema.base import DocumentClassifier, FieldExtractor
+from blue_data_doc_source.source.document.schema.schema_store import RecordStore
 
 from .freshness import FreshnessStore
 from .pipeline import WebPipeline
@@ -56,6 +58,9 @@ class WebDataSource(DataSource):
         freshness_store: Optional[FreshnessStore] = None,
         max_workers: int = 10,
         properties: Optional[Dict[str, Any]] = None,
+        classifier: Optional[DocumentClassifier] = None,
+        field_extractor: Optional[FieldExtractor] = None,
+        record_store: Optional[RecordStore] = None,
     ):
         super().__init__(name, properties)
         self._default_collection = default_collection
@@ -73,6 +78,9 @@ class WebDataSource(DataSource):
             timeout=timeout,
             freshness_store=freshness_store,
             max_workers=max_workers,
+            classifier=classifier,
+            field_extractor=field_extractor,
+            record_store=record_store,
         )
 
     def execute_query(self, query, database=None, collection=None, optional_properties=None):
@@ -92,11 +100,15 @@ class WebDataSource(DataSource):
             return self._ensure_index(query, collection)
         elif op == "WEB.EXTRACT":
             return self._extract(query)
+        elif op == "WEB.FIND":
+            return self._find(query)
+        elif op == "WEB.FIND_THEN_SEARCH":
+            return self._find_then_search(query, collection)
         else:
             raise ValueError(
                 f"Unsupported op: {op!r}. "
                 "Expected WEB.INGEST, WEB.INGEST_FEED, WEB.CRAWL, WEB.SEARCH_WEB, "
-                "WEB.SEARCH, WEB.ENSURE_INDEX, or WEB.EXTRACT"
+                "WEB.SEARCH, WEB.ENSURE_INDEX, WEB.EXTRACT, WEB.FIND, or WEB.FIND_THEN_SEARCH"
             )
 
     def _ingest(self, request: Dict[str, Any], collection_override=None) -> List[Dict[str, Any]]:
@@ -208,6 +220,44 @@ class WebDataSource(DataSource):
     def _ensure_index(self, request: Dict[str, Any], collection_override=None) -> None:
         collection = collection_override or request.get("collection")
         self._pipeline.ensure_index(collection=collection)
+
+    def _find(self, request: Dict[str, Any]):
+        """Implement WEB.FIND — filter web page records by extracted field values.
+
+        Requires the source to have been constructed with a ``classifier``.
+        Pass ``"coverage": true`` to receive a :class:`FindResult` with a
+        :class:`CoverageReport` instead of a plain list.
+        """
+        return self._pipeline.find_records(
+            request.get("filter"),
+            coverage=bool(request.get("coverage", False)),
+        )
+
+    def _find_then_search(self, request: Dict[str, Any], collection_override=None) -> List[Dict[str, Any]]:
+        """Implement WEB.FIND_THEN_SEARCH.
+
+        Stage 1: filter web page records by ``find_filter`` (deterministic, no LLM).
+        Stage 2: vector search scoped to each matched page.
+        Results merged, deduped, sorted by score, capped at ``k``.
+
+        Required request fields:
+            ``query`` — text to search within matched pages
+
+        Optional request fields:
+            ``find_filter`` — field filter dict (same syntax as WEB.FIND)
+            ``k`` — number of results (default 5)
+            ``collection`` — collection to search in
+        """
+        query_text = request.get("query")
+        if not query_text:
+            raise ValueError("WEB.FIND_THEN_SEARCH requires a 'query' field")
+        collection = collection_override or request.get("collection")
+        return self._pipeline.find_then_search(
+            query=query_text,
+            find_filter=request.get("find_filter"),
+            k=request.get("k", 5),
+            collection=collection,
+        )
 
     def execute_query_nl(self, text: str, collection=None):
         """Parse *text* as a natural language query and execute it.
