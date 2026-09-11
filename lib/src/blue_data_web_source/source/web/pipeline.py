@@ -11,6 +11,7 @@ from blue_data_doc_source import CoverageReport, FindResult
 from blue_data_doc_source.source.document.chunkers import Chunker, SectionChunker
 from blue_data_doc_source.source.document.embeddings import EmbeddingModel
 from blue_data_doc_source.source.document.enrichment import Enricher
+from blue_data_doc_source.source.document.graph import GraphIndexer
 from blue_data_doc_source.source.document.schema.base import DocumentClassifier, FieldExtractor
 from blue_data_doc_source.source.document.schema.schema_store import MemoryRecordStore, RecordStore, _get_nested
 
@@ -47,6 +48,8 @@ class WebPipeline:
         classifier: Optional[DocumentClassifier] = None,
         field_extractor: Optional[FieldExtractor] = None,
         record_store: Optional[RecordStore] = None,
+        graph_source: Optional[Any] = None,
+        graph_database: str = "web",
     ):
         self._fetcher = WebFetcher(timeout=timeout)
         self._extractor = WebExtractor()
@@ -63,6 +66,10 @@ class WebPipeline:
         self._record_store = record_store if record_store is not None else (
             MemoryRecordStore() if (classifier is not None or field_extractor is not None) else None
         )
+        self._graph_indexer: Optional[GraphIndexer] = None
+        if graph_source is not None:
+            self._graph_indexer = GraphIndexer(graph_source, database=graph_database)
+            self._graph_indexer.ensure_database()
 
     def ingest(
         self,
@@ -174,6 +181,14 @@ class WebPipeline:
                     doc_id=chunk_id,
                     doc=record_dict,
                 )
+
+        if self._graph_indexer is not None and records:
+            self._graph_indexer.index_document(
+                document_id=page_id,
+                file_name=fetch_result.final_url,
+                document_type=page_type,
+                records=records,
+            )
 
         if self._freshness_store is not None:
             now = datetime.now(timezone.utc).isoformat()
@@ -344,6 +359,60 @@ class WebPipeline:
 
         all_results.sort(key=lambda c: c.get("score") or 0, reverse=True)
         return all_results[:k]
+
+    def graph_neighbors(
+        self,
+        entity_name: str,
+        entity_type: Optional[str] = None,
+        k: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """Find chunks that mention *entity_name* via graph traversal.
+
+        Requires ``graph_source`` to have been set at construction time.
+
+        Args:
+            entity_name: Entity text to search for (case-insensitive).
+            entity_type: Restrict to one entity type (PROPER_NOUN, DATE, …).
+                When ``None``, all known entity types are tried.
+            k: Maximum number of chunk results to return.
+
+        Raises:
+            ValueError: If no ``graph_source`` was configured.
+        """
+        if self._graph_indexer is None:
+            raise ValueError(
+                "graph_neighbors requires a graph_source. "
+                "Pass graph_source= when constructing WebPipeline."
+            )
+        return self._graph_indexer.graph_neighbors(entity_name, entity_type=entity_type, k=k)
+
+    def graph_query(
+        self,
+        node_id: str,
+        edge_type: Optional[str] = None,
+        direction: str = "both",
+        k: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """General graph traversal from *node_id*.
+
+        Args:
+            node_id: Graph node ID (e.g. ``doc:web_abc123``,
+                ``entity:PROPER_NOUN:apple inc``).
+            edge_type: Edge type to follow. ``None`` traverses all types.
+            direction: ``"out"``, ``"in"``, or ``"both"`` (default).
+            k: Maximum number of results. ``None`` returns all.
+
+        Raises:
+            ValueError: If no ``graph_source`` was configured.
+        """
+        if self._graph_indexer is None:
+            raise ValueError(
+                "graph_query requires a graph_source. "
+                "Pass graph_source= when constructing WebPipeline."
+            )
+        return self._graph_indexer.get_neighbors(
+            node_id, edge_type=edge_type, direction=direction, k=k
+        )
 
     def ensure_index(self, collection: Optional[str] = None) -> None:
         """Create the vector index for a collection if it does not already exist."""

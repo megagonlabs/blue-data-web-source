@@ -1,10 +1,11 @@
-"""Tests for WEB.FIND, classification/field-extraction wiring, and enrichment storage."""
+"""Tests for WEB.FIND, classification/field-extraction wiring, enrichment storage, and graph indexing."""
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from blue_data.source.graph.memory_graph_source import MemoryGraphSource
 from blue_data_doc_source import CoverageReport, FindResult
 from blue_data_doc_source.source.document.schema.schema_store import MemoryRecordStore
 from blue_data_web_source.source.web.extractor import ExtractResult
@@ -438,3 +439,155 @@ class TestWebFindThenSearchOp:
             collection=None,
         )
         assert result == [{"chunk_id": "c1"}]
+
+
+# ---------------------------------------------------------------------------
+# Graph indexing
+# ---------------------------------------------------------------------------
+
+class TestGraphIndexing:
+    def _meta(self):
+        return MagicMock(
+            schema_type=None, keywords=[], publisher=None, canonical_url=None,
+            author=None, date_published=None, description=None,
+        )
+
+    @patch("blue_data_web_source.source.web.pipeline.WebFetcher")
+    @patch("blue_data_web_source.source.web.pipeline.WebExtractor")
+    @patch("blue_data_web_source.source.web.pipeline.MetadataExtractor")
+    def test_document_node_created_after_ingest(self, mock_meta, mock_ext, mock_fetcher):
+        mock_fetcher.return_value.fetch.return_value = _fetch()
+        mock_ext.return_value.extract.return_value = _extract()
+        mock_meta.return_value.extract.return_value = self._meta()
+
+        graph = MemoryGraphSource("test")
+        pipeline = _pipeline(graph_source=graph)
+        pipeline.ingest(_URL)
+
+        # page_id is sha256(url)[:16] prefixed with "web_"
+        from hashlib import sha256
+        page_id = "web_" + sha256(_URL.encode()).hexdigest()[:16]
+        node = graph.get_node("web", f"doc:{page_id}")
+        assert node is not None
+        assert node["properties"]["file_name"] == _URL
+
+    @patch("blue_data_web_source.source.web.pipeline.WebFetcher")
+    @patch("blue_data_web_source.source.web.pipeline.WebExtractor")
+    @patch("blue_data_web_source.source.web.pipeline.MetadataExtractor")
+    def test_chunk_nodes_created_after_ingest(self, mock_meta, mock_ext, mock_fetcher):
+        mock_fetcher.return_value.fetch.return_value = _fetch()
+        mock_ext.return_value.extract.return_value = _extract()
+        mock_meta.return_value.extract.return_value = self._meta()
+
+        graph = MemoryGraphSource("test")
+        pipeline = _pipeline(graph_source=graph)
+        results = pipeline.ingest(_URL)
+
+        for chunk in results:
+            node = graph.get_node("web", f"chunk:{chunk['chunk_id']}")
+            assert node is not None
+
+    @patch("blue_data_web_source.source.web.pipeline.WebFetcher")
+    @patch("blue_data_web_source.source.web.pipeline.WebExtractor")
+    @patch("blue_data_web_source.source.web.pipeline.MetadataExtractor")
+    def test_entity_nodes_created_when_enricher_set(self, mock_meta, mock_ext, mock_fetcher):
+        mock_fetcher.return_value.fetch.return_value = _fetch()
+        mock_ext.return_value.extract.return_value = _extract()
+        mock_meta.return_value.extract.return_value = self._meta()
+
+        enricher = MagicMock()
+        enricher.enrich.return_value = {
+            "entities": [{"text": "Apple Inc", "type": "PROPER_NOUN"}],
+        }
+        graph = MemoryGraphSource("test")
+        pipeline = _pipeline(enricher=enricher, graph_source=graph)
+        pipeline.ingest(_URL)
+
+        node = graph.get_node("web", "entity:PROPER_NOUN:apple inc")
+        assert node is not None
+        assert node["properties"]["name"] == "Apple Inc"
+
+    @patch("blue_data_web_source.source.web.pipeline.WebFetcher")
+    @patch("blue_data_web_source.source.web.pipeline.WebExtractor")
+    @patch("blue_data_web_source.source.web.pipeline.MetadataExtractor")
+    def test_no_graph_indexing_without_graph_source(self, mock_meta, mock_ext, mock_fetcher):
+        mock_fetcher.return_value.fetch.return_value = _fetch()
+        mock_ext.return_value.extract.return_value = _extract()
+        mock_meta.return_value.extract.return_value = self._meta()
+
+        pipeline = _pipeline()
+        assert pipeline._graph_indexer is None
+        results = pipeline.ingest(_URL)
+        assert len(results) > 0   # ingest still works fine
+
+    def test_graph_neighbors_raises_without_graph_source(self):
+        pipeline = _pipeline()
+        with pytest.raises(ValueError, match="graph_source"):
+            pipeline.graph_neighbors("Apple")
+
+    def test_graph_query_raises_without_graph_source(self):
+        pipeline = _pipeline()
+        with pytest.raises(ValueError, match="graph_source"):
+            pipeline.graph_query("doc:web_abc")
+
+    @patch("blue_data_web_source.source.web.pipeline.WebFetcher")
+    @patch("blue_data_web_source.source.web.pipeline.WebExtractor")
+    @patch("blue_data_web_source.source.web.pipeline.MetadataExtractor")
+    def test_graph_neighbors_returns_chunks_mentioning_entity(self, mock_meta, mock_ext, mock_fetcher):
+        mock_fetcher.return_value.fetch.return_value = _fetch()
+        mock_ext.return_value.extract.return_value = _extract()
+        mock_meta.return_value.extract.return_value = self._meta()
+
+        enricher = MagicMock()
+        enricher.enrich.return_value = {"entities": [{"text": "Apple Inc", "type": "PROPER_NOUN"}]}
+        graph = MemoryGraphSource("test")
+        pipeline = _pipeline(enricher=enricher, graph_source=graph)
+        pipeline.ingest(_URL)
+
+        results = pipeline.graph_neighbors("Apple Inc", entity_type="PROPER_NOUN")
+        assert len(results) > 0
+        assert results[0]["entity"] == "Apple Inc"
+
+
+# ---------------------------------------------------------------------------
+# WEB.GRAPH_NEIGHBORS and WEB.GRAPH_QUERY ops
+# ---------------------------------------------------------------------------
+
+class TestGraphOps:
+    def test_graph_neighbors_op_dispatches(self):
+        source = WebDataSource(name="test", graph_source=MemoryGraphSource("test"))
+        source._pipeline.graph_neighbors = MagicMock(return_value=[{"chunk_id": "c1"}])
+        result = source.execute_query({
+            "op": "WEB.GRAPH_NEIGHBORS",
+            "entity_name": "Apple Inc",
+            "entity_type": "PROPER_NOUN",
+            "k": 5,
+        })
+        source._pipeline.graph_neighbors.assert_called_once_with(
+            "Apple Inc", entity_type="PROPER_NOUN", k=5
+        )
+        assert result == [{"chunk_id": "c1"}]
+
+    def test_graph_neighbors_op_requires_entity_name(self):
+        source = WebDataSource(name="test", graph_source=MemoryGraphSource("test"))
+        with pytest.raises(ValueError, match="entity_name"):
+            source.execute_query({"op": "WEB.GRAPH_NEIGHBORS"})
+
+    def test_graph_query_op_dispatches(self):
+        source = WebDataSource(name="test", graph_source=MemoryGraphSource("test"))
+        source._pipeline.graph_query = MagicMock(return_value=[])
+        source.execute_query({
+            "op": "WEB.GRAPH_QUERY",
+            "node_id": "doc:web_abc",
+            "edge_type": "HAS_CHUNK",
+            "direction": "out",
+            "k": 10,
+        })
+        source._pipeline.graph_query.assert_called_once_with(
+            "doc:web_abc", edge_type="HAS_CHUNK", direction="out", k=10
+        )
+
+    def test_graph_query_op_requires_node_id(self):
+        source = WebDataSource(name="test", graph_source=MemoryGraphSource("test"))
+        with pytest.raises(ValueError, match="node_id"):
+            source.execute_query({"op": "WEB.GRAPH_QUERY"})

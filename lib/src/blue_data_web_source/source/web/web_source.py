@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from blue_data.source.source import DataSource
 from blue_data.source.vector.vector_source import VectorSource
@@ -9,6 +9,9 @@ from blue_data_doc_source.source.document.embeddings import EmbeddingModel
 from blue_data_doc_source.source.document.enrichment import Enricher
 from blue_data_doc_source.source.document.schema.base import DocumentClassifier, FieldExtractor
 from blue_data_doc_source.source.document.schema.schema_store import RecordStore
+
+if TYPE_CHECKING:
+    from blue_data.source.graph.graph_source import GraphSource
 
 from .freshness import FreshnessStore
 from .pipeline import WebPipeline
@@ -61,6 +64,8 @@ class WebDataSource(DataSource):
         classifier: Optional[DocumentClassifier] = None,
         field_extractor: Optional[FieldExtractor] = None,
         record_store: Optional[RecordStore] = None,
+        graph_source: Optional["GraphSource"] = None,
+        graph_database: str = "web",
     ):
         super().__init__(name, properties)
         self._default_collection = default_collection
@@ -81,6 +86,8 @@ class WebDataSource(DataSource):
             classifier=classifier,
             field_extractor=field_extractor,
             record_store=record_store,
+            graph_source=graph_source,
+            graph_database=graph_database,
         )
 
     def execute_query(self, query, database=None, collection=None, optional_properties=None):
@@ -104,11 +111,16 @@ class WebDataSource(DataSource):
             return self._find(query)
         elif op == "WEB.FIND_THEN_SEARCH":
             return self._find_then_search(query, collection)
+        elif op == "WEB.GRAPH_NEIGHBORS":
+            return self._graph_neighbors(query)
+        elif op == "WEB.GRAPH_QUERY":
+            return self._graph_query(query)
         else:
             raise ValueError(
                 f"Unsupported op: {op!r}. "
                 "Expected WEB.INGEST, WEB.INGEST_FEED, WEB.CRAWL, WEB.SEARCH_WEB, "
-                "WEB.SEARCH, WEB.ENSURE_INDEX, WEB.EXTRACT, WEB.FIND, or WEB.FIND_THEN_SEARCH"
+                "WEB.SEARCH, WEB.ENSURE_INDEX, WEB.EXTRACT, WEB.FIND, "
+                "WEB.FIND_THEN_SEARCH, WEB.GRAPH_NEIGHBORS, or WEB.GRAPH_QUERY"
             )
 
     def _ingest(self, request: Dict[str, Any], collection_override=None) -> List[Dict[str, Any]]:
@@ -257,6 +269,46 @@ class WebDataSource(DataSource):
             find_filter=request.get("find_filter"),
             k=request.get("k", 5),
             collection=collection,
+        )
+
+    def _graph_neighbors(self, request: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Implement WEB.GRAPH_NEIGHBORS — entity lookup via graph traversal.
+
+        Required request fields:
+            ``entity_name`` — entity text to search for (case-insensitive)
+
+        Optional request fields:
+            ``entity_type`` — restrict to one type (PROPER_NOUN, DATE, …)
+            ``k`` — maximum results (default 10)
+        """
+        entity_name = request.get("entity_name")
+        if not entity_name:
+            raise ValueError("WEB.GRAPH_NEIGHBORS requires an 'entity_name' field")
+        return self._pipeline.graph_neighbors(
+            entity_name,
+            entity_type=request.get("entity_type"),
+            k=request.get("k", 10),
+        )
+
+    def _graph_query(self, request: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Implement WEB.GRAPH_QUERY — general graph traversal from any node ID.
+
+        Required request fields:
+            ``node_id`` — graph node ID to start from
+
+        Optional request fields:
+            ``edge_type`` — edge type to follow (default: all types)
+            ``direction`` — ``"out"``, ``"in"``, or ``"both"`` (default)
+            ``k`` — maximum results (default: all)
+        """
+        node_id = request.get("node_id")
+        if not node_id:
+            raise ValueError("WEB.GRAPH_QUERY requires a 'node_id' field")
+        return self._pipeline.graph_query(
+            node_id,
+            edge_type=request.get("edge_type"),
+            direction=request.get("direction", "both"),
+            k=request.get("k"),
         )
 
     def execute_query_nl(self, text: str, collection=None):
