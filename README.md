@@ -114,6 +114,13 @@ Not the only RSS loader or web crawler. LangChain and LlamaIndex both have RSS l
 - **WEB.SEARCH_WEB** — Tavily search → auto-ingest → semantic rank in one op; pluggable search backend
 - **WEB.SEARCH** — KNN over ingested chunks with configurable k and collection
 - **WEB.ENSURE_INDEX** — create the vector index for a collection
+- **WEB.FIND** — filter web page records by extracted field values; deterministic, no embedding; optional `coverage=true` for `FindResult` + `CoverageReport`
+- **WEB.FIND_THEN_SEARCH** — filter pages by fields then vector search within matched pages; Stage 1 deterministic, Stage 2 KNN scoped by `page_id`
+- **WEB.GRAPH_NEIGHBORS** — find chunks mentioning a named entity via graph traversal; O(1) entity lookup
+- **WEB.GRAPH_QUERY** — general graph traversal from any node ID (Document, Chunk, Entity, Section)
+- **Page type classification** — `KeywordClassifier` (or any `DocumentClassifier`) detects page type at ingest; one call per page, zero LLM cost
+- **Structured field extraction** — `LLMFieldExtractor` or `StructuredFieldExtractor` extracts typed fields (author, price, publish_date, topics…) per page; persisted to `RecordStore`
+- **Graph indexing** — `GraphIndexer` (from doc-source) builds Document/Section/Chunk/Entity nodes; entity nodes shared across pages and documents in the same graph
 - **Freshness tracking** — content-hash skip per URL; cross-URL dedup skips identical text from a different URL; `MemoryFreshnessStore` or `FileFreshnessStore`
 - **JSON-LD / OpenGraph metadata** — `MetadataExtractor` parses structured metadata from every page; enriches `author`, `date`, `description` when trafilatura finds none; adds `schema_type`, `keywords`, `publisher`, `canonical_url` to every chunk
 - **Natural language interface** — `execute_query_nl` maps plain English to `WEB.*` ops via Claude tool use
@@ -275,6 +282,68 @@ for r in results:
     print(r["url"], r["text"][:120])
 ```
 
+### Web pages as documents — classification, field extraction, and graph indexing
+
+Treat every ingested page as a structured document: classify its type, extract typed fields, filter by those fields, and traverse the entity graph.
+
+```python
+from blue_data_doc_source import KeywordClassifier, LLMFieldExtractor, FileRecordStore
+from blue_data_doc_source.source.document.enrichment import BasicEnricher
+from blue_data.source.graph.memory_graph_source import MemoryGraphSource
+
+source = WebDataSource(
+    name="news",
+    embedding_model=OpenAIEmbeddingModel(),
+    vector_source=redis_source,
+    enricher=BasicEnricher(),
+    classifier=KeywordClassifier(extra_types={
+        "news_article": ["breaking", "reported", "exclusive", "journalist"],
+        "product_page": ["buy now", "add to cart", "in stock", "sku"],
+    }),
+    field_extractor=LLMFieldExtractor(extra_types={
+        "news_article": "Extract: author, publish_date, topics (list), outlet.",
+        "product_page": "Extract: product_name, price, brand, availability.",
+    }),
+    record_store=FileRecordStore("web_records.json"),  # persists across restarts
+    graph_source=MemoryGraphSource("web"),
+)
+
+# Ingest
+source.execute_query({"op": "WEB.INGEST", "url": "https://example.com/article"})
+
+# Filter by extracted fields — deterministic, no embedding
+news = source.execute_query({
+    "op": "WEB.FIND",
+    "filter": {"document_type": "news_article", "fields.author": {"contains": "Smith"}},
+})
+
+# Filter pages then search text within matched pages
+results = source.execute_query({
+    "op": "WEB.FIND_THEN_SEARCH",
+    "find_filter": {"document_type": "product_page", "fields.brand": "Apple"},
+    "query": "battery life",
+    "k": 5,
+})
+
+# Entity lookup via graph
+chunks = source.execute_query({
+    "op": "WEB.GRAPH_NEIGHBORS",
+    "entity_name": "Apple Inc",
+    "entity_type": "PROPER_NOUN",
+    "k": 10,
+})
+
+# Coverage reporting — how many pages had the queried field extracted?
+from blue_data_doc_source import FindResult
+result = source.execute_query({
+    "op": "WEB.FIND",
+    "filter": {"fields.author": {"exists": True}},
+    "coverage": True,
+})
+if isinstance(result, FindResult) and result.status == "partial":
+    print(result.warning)  # "X of Y pages are missing the field(s) 'fields.author'."
+```
+
 ---
 
 ## Ops reference
@@ -288,6 +357,10 @@ for r in results:
 | `WEB.CRAWL` | `url` | `depth` (1), `max_pages` (10), `same_domain_only` (True), `collection` | `List[Dict]` — all chunks |
 | `WEB.SEARCH_WEB` | `query` | `k` (5 URLs), `top_k` (5 chunks), `collection` | `List[Dict]` — ranked chunks |
 | `WEB.SEARCH` | `query` | `k` (5), `collection` | `List[Dict]` — ranked chunks |
+| `WEB.FIND` | — | `filter`, `coverage` (False) | `List[Dict]` or `FindResult` |
+| `WEB.FIND_THEN_SEARCH` | `query` | `find_filter`, `k` (5), `collection` | `List[Dict]` — ranked chunks |
+| `WEB.GRAPH_NEIGHBORS` | `entity_name` | `entity_type`, `k` (10) | `List[Dict]` — chunk references |
+| `WEB.GRAPH_QUERY` | `node_id` | `edge_type`, `direction` ("both"), `k` | `List[Dict]` — neighbour nodes |
 
 ### WEB.INGEST_FEED behaviour
 
@@ -335,9 +408,11 @@ URL / Feed URL
   → web_source/   — WebDataSource extends blue-data DataSource; public entry point
 ```
 
-**`WebDataSource`** is the top-level public entry point. It extends Blue's `DataSource` abstraction and dispatches on `op` codes: `WEB.INGEST`, `WEB.EXTRACT`, `WEB.CRAWL`, `WEB.SEARCH`, `WEB.SEARCH_WEB`, `WEB.INGEST_FEED`, `WEB.ENSURE_INDEX`. It owns a single `WebPipeline` instance reused across calls.
+**`WebDataSource`** is the top-level public entry point. It extends Blue's `DataSource` abstraction and dispatches on all `WEB.*` op codes. It owns a single `WebPipeline` instance reused across calls.
 
 **`WebPipeline`** orchestrates the ingestion chain. `ingest(url)` returns `List[Dict]` and optionally upserts to a vector store. `ingest_many(urls)` ingests multiple URLs concurrently via `ThreadPoolExecutor`. `ingest_feed(url)` filters entries by `since` date, caps with `max_entries`, and calls `ingest_many()` per feed. Returns `[]` when the extractor yields no content, or when freshness tracking determines content is unchanged.
+
+When `classifier=` is set: every ingested page is classified (page type), fields extracted (if `field_extractor=` is set), and a schema record upserted to `RecordStore`. This enables `WEB.FIND` and `WEB.FIND_THEN_SEARCH`. When `graph_source=` is set: every ingested page is graph-indexed via `GraphIndexer` (Document, Section, Chunk, Entity nodes). This enables `WEB.GRAPH_NEIGHBORS` and `WEB.GRAPH_QUERY`. All these components are optional — omitting them leaves existing behaviour unchanged.
 
 **`MetadataExtractor`** parses JSON-LD, OpenGraph, and `<meta>` tags from raw HTML in a single pass (no ML dependency). It fills in `author`, `date`, and `description` when trafilatura returns `None`, and adds `schema_type`, `keywords`, `publisher`, and `canonical_url` to every chunk record.
 
@@ -361,6 +436,7 @@ Every ingested chunk is serialised via `WebChunkRecord.to_dict()`. Optional fiel
 | `chunk_index` | int | Zero-based position within the page |
 | `text` | str | Chunk text |
 | `fetch_timestamp` | str | ISO 8601 UTC timestamp of the fetch |
+| `page_id` | str \| omitted | `web_{sha256(url)[:16]}` — stable page identifier; used for graph indexing and FIND_THEN_SEARCH scoping |
 | `title` | str \| omitted | Page title from trafilatura metadata |
 | `author` | str \| omitted | Author from trafilatura or JSON-LD/meta fallback |
 | `date` | str \| omitted | Publication date from trafilatura or JSON-LD fallback |
@@ -368,6 +444,8 @@ Every ingested chunk is serialised via `WebChunkRecord.to_dict()`. Optional fiel
 | `language` | str \| omitted | Detected language code |
 | `collection` | str \| omitted | Collection name used for this ingest |
 | `section_title` | str \| omitted | Section heading from SectionChunker |
+| `entities` | list[dict] \| omitted | Entities extracted by the enricher (present when enricher is set and finds entities) |
+| `semantic_hints` | dict \| omitted | Additional enrichment output beyond entities |
 | `schema_type` | str \| omitted | Schema.org `@type` from JSON-LD (e.g. `NewsArticle`) |
 | `keywords` | list[str] \| omitted | Keywords from JSON-LD or `<meta name="keywords">` |
 | `publisher` | str \| omitted | Publisher name from JSON-LD or `og:site_name` |
@@ -420,5 +498,14 @@ Integration tests use two kinds of fixtures:
 | Natural language interface (`execute_query_nl`) | ✅ |
 | URL-level deduplication (same URL → same chunk IDs) | ✅ |
 | Content-level deduplication (same text, different URLs) | ✅ |
+| Page type classification (`classifier=`) | ✅ |
+| Structured field extraction per page (`field_extractor=`) | ✅ |
+| Filter pages by extracted fields (`WEB.FIND`) | ✅ |
+| Filter then scoped vector search (`WEB.FIND_THEN_SEARCH`) | ✅ |
+| Coverage reporting (`FindResult` / `CoverageReport`) | ✅ |
+| Graph indexing — entities, sections, chunks (`graph_source=`) | ✅ |
+| Entity lookup via graph traversal (`WEB.GRAPH_NEIGHBORS`) | ✅ |
+| General graph traversal (`WEB.GRAPH_QUERY`) | ✅ |
+| Enrichment results stored on chunk (`entities`, `semantic_hints`) | ✅ |
 | Source quality / trust scoring per domain | Not built |
 | Entity resolution across sources | Not built |
