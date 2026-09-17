@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "blue-data-web-mcp"
+version = "0.1.0"
+description = "MCP server for blue-data-web-source"
+requires-python = ">=3.10"
+dependencies = [
+    "blue-data-web-source>=0.1.0",
+    "mcp>=1.0.0",
+]
+
+[project.optional-dependencies]
+openai  = ["openai>=1.0.0"]
+redis   = ["redis[hiredis]>=4.5.0"]
+feed    = ["feedparser>=6.0.0"]
+tavily  = ["tavily-python>=0.3.0"]
+dev     = ["pytest"]
+
+[project.scripts]
+blue-data-web-mcp = "web_mcp.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

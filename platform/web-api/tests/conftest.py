@@ -10,7 +10,7 @@ from web_api import config as _config_module
 
 def _make_source(default_collection: str = "web"):
     source = MagicMock()
-    source._pipeline._collection = default_collection
+    source.default_collection = default_collection
     return source
 
 

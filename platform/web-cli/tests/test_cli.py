@@ -7,7 +7,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from blue_data_web_cli.config import reset_source, _build_source
+from blue_data_web_cli.config import reset_source
+from blue_data_web_source import WebDataSource
 from blue_data_web_cli.main import cli
 
 
@@ -325,12 +326,12 @@ class TestExtract:
 class TestEnricherConfig:
     def _enricher(self, enricher_env: str, monkeypatch):
         monkeypatch.setenv("BLUE_WEB_ENRICHER", enricher_env)
-        return _build_source()._pipeline._enricher
+        return WebDataSource.from_env()._pipeline._enricher
 
     def test_default_is_basic_enricher(self, monkeypatch):
         monkeypatch.delenv("BLUE_WEB_ENRICHER", raising=False)
         from blue_data_doc_source.source.document.enrichment import BasicEnricher
-        assert isinstance(_build_source()._pipeline._enricher, BasicEnricher)
+        assert isinstance(WebDataSource.from_env()._pipeline._enricher, BasicEnricher)
 
     def test_none_enricher(self, monkeypatch):
         assert self._enricher("none", monkeypatch) is None
@@ -353,7 +354,7 @@ class TestEnricherConfig:
         monkeypatch.setenv("BLUE_WEB_ENRICHER", "llm")
         monkeypatch.setenv("BLUE_WEB_LLM_MODEL", "gpt-4o")
         from blue_data_doc_source.source.document.enrichment import LLMEnricher
-        enricher = _build_source()._pipeline._enricher
+        enricher = WebDataSource.from_env()._pipeline._enricher
         assert isinstance(enricher, LLMEnricher)
         assert enricher._llm_fn is not None
 

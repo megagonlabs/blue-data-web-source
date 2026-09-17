@@ -38,7 +38,7 @@ def _stub_mcp():
 
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
-_SERVER_PATH = os.path.join(_REPO_ROOT, "platform/web-mcp/src/server.py")
+_SERVER_PATH = os.path.join(_REPO_ROOT, "platform/web-mcp/src/web_mcp/server.py")
 
 
 def _load_server():
@@ -260,7 +260,6 @@ def test_search_no_embedding_model_returns_error():
 
 def test_search_omits_none_fields():
     chunk = _make_chunk(idx=0, title=None, section=None)
-    del chunk["title"]
     source = MagicMock()
     source.execute_query.return_value = [chunk]
     with patch.object(_server, "_source", source):
@@ -293,34 +292,38 @@ def test_search_web_exception_returns_error():
     assert "error" in result
 
 
-# ── _build_source env-var wiring ──────────────────────────────────────────────
+# ── WebDataSource.from_env() wiring ──────────────────────────────────────────
 
-def test_build_source_uses_dummy_embedding_by_default(monkeypatch):
+def test_from_env_uses_dummy_embedding_by_default(monkeypatch):
     monkeypatch.delenv("BLUE_WEB_EMBEDDING", raising=False)
     monkeypatch.delenv("BLUE_WEB_REDIS_HOST", raising=False)
     from blue_data_doc_source.source.document.embeddings.dummy_embedding import DummyEmbeddingModel
-    source = _server._build_source()
+    from blue_data_web_source import WebDataSource
+    source = WebDataSource.from_env()
     assert isinstance(source._pipeline._embedding_model, DummyEmbeddingModel)
 
 
-def test_build_source_chunk_size_env(monkeypatch):
+def test_from_env_chunk_size_env(monkeypatch):
     monkeypatch.setenv("BLUE_WEB_CHUNK_SIZE", "500")
     monkeypatch.setenv("BLUE_WEB_OVERLAP", "75")
     monkeypatch.delenv("BLUE_WEB_REDIS_HOST", raising=False)
-    source = _server._build_source()
-    assert source._pipeline._chunker._chunk_size == 500
-    assert source._pipeline._chunker._overlap == 75
+    from blue_data_web_source import WebDataSource
+    source = WebDataSource.from_env()
+    assert source._pipeline._chunker._window.chunk_size == 500
+    assert source._pipeline._chunker._window.overlap == 75
 
 
-def test_build_source_timeout_env(monkeypatch):
+def test_from_env_timeout_env(monkeypatch):
     monkeypatch.setenv("BLUE_WEB_TIMEOUT", "60")
     monkeypatch.delenv("BLUE_WEB_REDIS_HOST", raising=False)
-    source = _server._build_source()
+    from blue_data_web_source import WebDataSource
+    source = WebDataSource.from_env()
     assert source._pipeline._fetcher._timeout == 60.0
 
 
-def test_build_source_collection_env(monkeypatch):
+def test_from_env_collection_env(monkeypatch):
     monkeypatch.setenv("BLUE_WEB_COLLECTION", "articles")
     monkeypatch.delenv("BLUE_WEB_REDIS_HOST", raising=False)
-    source = _server._build_source()
-    assert source._pipeline._collection == "articles"
+    from blue_data_web_source import WebDataSource
+    source = WebDataSource.from_env()
+    assert source.default_collection == "articles"

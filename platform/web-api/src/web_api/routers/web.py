@@ -68,7 +68,7 @@ def ensure_index(request: EnsureIndexRequest):
     """Create the vector index for a collection. Idempotent — safe to call multiple times."""
     source = get_source()
     source.execute_query({"op": "WEB.ENSURE_INDEX", "collection": request.collection})
-    return {"status": "ok", "collection": request.collection or source._pipeline._collection}
+    return {"status": "ok", "collection": request.collection or source.default_collection}
 
 
 @router.post("/ingest")
@@ -97,7 +97,7 @@ def ingest(request: IngestRequest) -> Dict[str, Any]:
         "chunk_count": len(chunks),
         "pages_ingested": len(urls_ingested),
         "urls": urls_ingested,
-        "collection": request.collection or source._pipeline._collection,
+        "collection": request.collection or source.default_collection,
     }
 
 
@@ -125,7 +125,7 @@ def crawl(request: CrawlRequest) -> Dict[str, Any]:
         "chunk_count": len(chunks),
         "pages_ingested": len(urls_ingested),
         "urls": urls_ingested,
-        "collection": request.collection or source._pipeline._collection,
+        "collection": request.collection or source.default_collection,
     }
 
 
@@ -152,7 +152,7 @@ def feed(request: FeedRequest) -> Dict[str, Any]:
         "chunk_count": len(chunks),
         "articles_ingested": len(urls_ingested),
         "urls": urls_ingested,
-        "collection": request.collection or source._pipeline._collection,
+        "collection": request.collection or source.default_collection,
     }
 
 
