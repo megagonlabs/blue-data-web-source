@@ -16,12 +16,17 @@ pip install -e lib/
 python3 examples/backends/memory_quickstart.py
 ```
 
+> Replace `/path/to/blue-data` and `/path/to/blue-data-doc-source` with the paths where you cloned those repos.
+
 ---
 
 ## Directory layout
 
 ```
 examples/
+  demo.py                      # full pipeline demo: ingest → embed → search (offline, no API key)
+  demo_web.py                  # CLI-style demo: optional URL args, --embedding openai, --nl-query
+  ingest_url.py                # minimal: ingest one URL and print chunks (no vector store)
   mock_fetcher.py              # shared helper: offline HTML fixtures + build_mock_fetcher()
   README.md                    # this file
 
@@ -30,6 +35,23 @@ examples/
   integration-demos/           # End-to-end multi-component workflows
   framework-demos/             # Integration with LangGraph / MCP (OpenAI required)
   backends/                    # Swappable vector store + embedding backends
+```
+
+---
+
+## Root scripts
+
+| Script | What it shows | Deps |
+|---|---|---|
+| `demo.py` | Full pipeline: ingest → embed → search; works offline via local fixtures | `OPENAI_API_KEY` |
+| `demo_web.py` | End-to-end demo with optional real URLs; `--embedding openai`, `--nl-query` | OpenAI optional |
+| `ingest_url.py` | Minimal: ingest one URL and print chunks (no vector store required) | live network |
+
+```bash
+python3 examples/demo.py
+python3 examples/ingest_url.py https://python.org
+python3 examples/demo_web.py
+OPENAI_API_KEY=sk-... python3 examples/demo_web.py --embedding openai --query "what is this about"
 ```
 
 ---
@@ -97,7 +119,7 @@ OPENAI_API_KEY=sk-... python3 examples/framework-demos/langgraph_rag_demo.py
 
 # MCP agent — start the server first:
 cd platform/web-mcp
-BLUE_WEB_EMBEDDING=openai OPENAI_API_KEY=sk-... BLUE_WEB_REDIS_HOST=localhost python src/server.py
+BLUE_WEB_EMBEDDING=openai OPENAI_API_KEY=sk-... BLUE_WEB_REDIS_HOST=localhost python platform/web-mcp/src/web_mcp/server.py
 # then in another terminal:
 OPENAI_API_KEY=sk-... python3 examples/framework-demos/mcp_demo.py
 ```
@@ -128,6 +150,8 @@ OPENAI_API_KEY=sk-... python3 examples/backends/openai_embeddings_demo.py
 
 ## Op-code reference
 
+Source of truth: [docs/api-reference.md](../docs/api-reference.md).
+
 All operations are dispatched via `WebDataSource.execute_query(op_dict)`.
 
 | Op | Required fields | Optional | Returns |
@@ -141,11 +165,13 @@ All operations are dispatched via `WebDataSource.execute_query(op_dict)`.
 | `WEB.SEARCH_WEB` | `query` | `collection`, `k`(5) | `list[dict]` |
 
 `execute_query_nl(text, collection)` — Claude tool use; maps natural language to the above ops.
-Requires `pip install 'blue-data-web-source[nl]'` and `ANTHROPIC_API_KEY`.
+Requires `pip install 'blue-data-web-source[llm]'` and `ANTHROPIC_API_KEY`.
 
 ---
 
 ## WebChunkRecord field reference
+
+Source of truth: [docs/api-reference.md](../docs/api-reference.md).
 
 | Field | Type | Present | Description |
 |---|---|---|---|
@@ -166,7 +192,7 @@ Requires `pip install 'blue-data-web-source[nl]'` and `ANTHROPIC_API_KEY`.
 | `publisher` | str\|None | if present | From JSON-LD `publisher.name` or `og:site_name` |
 | `canonical_url` | str\|None | if present | From JSON-LD, `<link rel="canonical">`, or `og:url` |
 | `collection` | str\|None | if set | Collection name |
-| `embedding` | list[float]\|None | omitted | Omitted by `to_dict()` |
+| `embedding` | list[float]\|None | if set | Included by `to_dict()` when an embedding model is configured |
 | `entities` | list[dict] | if enriched | Added by WebPipeline when BasicEnricher used |
 
 `WebChunkRecord.to_dict()` omits fields with `None` values — check key presence, not value.

@@ -1,0 +1,64 @@
+
+════════════════════════════════════════════════════════════════════
+  blue-data-web-source — Extraction & Nav-Strip Demo
+════════════════════════════════════════════════════════════════════
+
+  CASE 1 — Article with nav fragments (should strip CMS noise)
+────────────────────────────────────────────────────────────────────
+  title   : Energy Transition: Key Milestones
+  author  : J Smith
+  date    : 2026-01-01
+  language: —
+  desc    : Tracking global progress on energy transition.
+
+  extracted text (808 chars):
+    Energy Transition: Key Milestones
+    Global investment in renewable energy reached $500 billion in 20
+    Utility-scale solar projects accounted for 60 percent of new cap
+    Government subsidies and carbon pricing mechanisms accelerated d
+    Rapid intermittent capacity additions stressed transmission netw
+
+  ✓  Nav fragments stripped (none of the 6 CMS markers remain)
+
+
+  CASE 2 — Login-wall redirect (JS + meta-refresh → returns None)
+────────────────────────────────────────────────────────────────────
+  → None  (no extractable content — page returned [])
+
+  CASE 3 — Metadata-rich article (author + date + description)
+────────────────────────────────────────────────────────────────────
+  title   : Ocean Acidification: 2026 Update
+  author  : Marine Research Institute
+  date    : 2026-03-15
+  language: —
+  desc    : Impact of CO2 on ocean chemistry and marine life.
+
+  extracted text (697 chars):
+    Ocean Acidification: 2026 Update
+    The average ocean pH has dropped from 8.2 to 8.1 over the past c
+    Biological Impacts
+    Shell-forming organisms including oysters, mussels, and sea urch
+    Mitigation Research
+    Experiments with ocean alkalinity enhancement show promise for l
+
+  ✓  Nav fragments stripped (none of the 6 CMS markers remain)
+
+
+  NAV FRAGMENT PATTERNS (stripped by WebExtractor)
+────────────────────────────────────────────────────────────────────
+    • Related Story:
+    • Read more:
+    • See also:
+    • Also read:
+    • Advertisement
+    • Story continues
+
+  These CMS cross-reference lines appear inline in article text
+  after trafilatura extraction. WebExtractor removes any line
+  that starts with one of these prefixes (case-sensitive).
+
+  WebPipeline returns [] when extract() returns None — the
+  vector store is never called for nav-only pages or login walls.
+
+════════════════════════════════════════════════════════════════════
+

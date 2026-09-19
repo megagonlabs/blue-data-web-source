@@ -32,7 +32,12 @@ WebPipeline(
 |--------|---------|-------------|
 | `ingest(url, collection, _fetch_result)` | `list[dict]` | Fetch, extract, chunk, enrich, embed, and upsert one URL; returns `[]` when extraction yields no body |
 | `ingest_many(urls, collection)` | `list[dict]` | Concurrent ingest via `ThreadPoolExecutor`; result order not guaranteed; failed URLs silently skipped |
+| `ingest_feed(url, since, max_entries, collection)` | `list[dict]` | Parse RSS/Atom feed; filter by `since` date; ingest each article URL |
 | `search(query, k=5, collection=None)` | `list[dict]` | Embed query and run KNN; raises if `embedding_model` or `vector_source` is not set |
+| `find_records(filter, coverage=True)` | `FindResult` | Filter page records from `RecordStore` by field values |
+| `find_then_search(query, find_filter, k=5)` | `list[dict]` | Filter pages by fields, then vector search within matched pages |
+| `graph_neighbors(entity, k=10)` | `list[dict]` | Find chunks mentioning a named entity via graph traversal |
+| `graph_query(node_id, depth=1, k=10)` | `list[dict]` | General graph traversal from any node ID |
 | `ensure_index(collection=None)` | `None` | Create vector index for the collection; idempotent |
 
 ### Page identity and deduplication
@@ -53,13 +58,20 @@ WebDataSource(
     embedding_model: EmbeddingModel | None = None,
     vector_source: VectorSource | None = None,
     enricher: Enricher | None = None,
-    chunk_size: int = 500,
-    overlap: int = 100,
+    chunk_size: int = 1000,
+    overlap: int = 150,
     default_collection: str = "web",
-    search_provider: WebSearchProvider | None = None,
-    nl_model: str = "claude-opus-4-8",
-    properties: dict | None = None,
     timeout: float = 30.0,
+    nl_model: str = "claude-opus-4-8",
+    search_provider: WebSearchProvider | None = None,
+    freshness_store: FreshnessStore | None = None,
+    max_workers: int = 10,
+    properties: dict | None = None,
+    classifier: DocumentClassifier | None = None,
+    field_extractor: FieldExtractor | None = None,
+    record_store: RecordStore | None = None,
+    graph_source: GraphSource | None = None,
+    graph_database: str = "web",
 )
 ```
 
@@ -70,10 +82,14 @@ WebDataSource(
 | `WEB.INGEST` | `url` OR `urls` | `collection` | `list[dict]` — one dict per chunk across all ingested pages |
 | `WEB.EXTRACT` | (`url` OR `urls`) + `schema` | — | `dict` (single URL) or `list[dict]` (multiple URLs) — extracted fields |
 | `WEB.CRAWL` | `url` | `depth` (default 1), `max_pages` (default 10), `same_domain_only` (default True), `collection` | `list[dict]` — flat chunk list from all crawled pages |
-| `WEB.SEARCH_WEB` | `query` | `k` (search result URLs, default 5), `top_k` (returned chunks, default 3), `collection` | `list[dict]` — semantically ranked chunks |
+| `WEB.SEARCH_WEB` | `query` | `k` (search result URLs, default 5), `top_k` (returned chunks, default k=5), `collection` | `list[dict]` — semantically ranked chunks |
 | `WEB.SEARCH` | `query` | `k` (default 5), `collection` | `list[dict]` — ranked chunks from local index |
 | `WEB.INGEST_FEED` | `url` | `since` (ISO 8601), `max_entries`, `collection` | `list[dict]` — chunks from all ingested feed articles |
 | `WEB.ENSURE_INDEX` | — | `collection` | `None` |
+| `WEB.FIND` | `filter` | `coverage` (default True) | `FindResult` — page records matching the filter |
+| `WEB.FIND_THEN_SEARCH` | `query`, `find_filter` | `k` (default 5) | `list[dict]` — vector search scoped to matched pages |
+| `WEB.GRAPH_NEIGHBORS` | `entity` | `k` (default 10) | `list[dict]` — chunks mentioning the entity |
+| `WEB.GRAPH_QUERY` | `node_id` | `depth` (default 1), `k` (default 10) | `list[dict]` — graph traversal from the given node |
 
 ### Methods
 
@@ -203,6 +219,9 @@ Canonical chunk schema for web content. Constructed by `WebPipeline` and seriali
 | `keywords` | list[str] \| omitted | From JSON-LD `keywords` or `<meta name="keywords">` |
 | `publisher` | str \| omitted | From JSON-LD `publisher.name` or `og:site_name` |
 | `canonical_url` | str \| omitted | From JSON-LD `url`, `<link rel="canonical">`, or `og:url` |
+| `page_id` | str \| omitted | `"web_" + sha256(final_url)[:16]`; set by `WebPipeline` on every chunk |
+| `entities` | list[dict] \| omitted | Entity dicts from `BasicEnricher`; omitted when empty |
+| `semantic_hints` | dict \| omitted | Semantic hint dict from enricher; omitted when empty |
 | `embedding` | list[float] \| omitted | Present only when an embedding model is set |
 
 ---
@@ -261,10 +280,10 @@ Translates plain-English instructions into `WEB.*` op dicts using Claude tool us
 ```python
 NLQueryParser(
     model: str = "claude-opus-4-8",
-    parse_fn: Callable[[str], dict] | None = None,
+    client: anthropic.Anthropic | None = None,
 )
 ```
 
-When `parse_fn` is provided it overrides the built-in Claude call entirely. The callable receives the raw instruction text and must return a valid `WEB.*` op dict.
+When `client` is provided it is used as the Anthropic SDK client instead of constructing a new one. Useful for injecting a pre-configured client in tests or shared-client scenarios.
 
 Requires `pip install 'blue-data-web-source[nl]'` and `ANTHROPIC_API_KEY`.

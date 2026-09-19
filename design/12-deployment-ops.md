@@ -10,7 +10,7 @@
 | REST API | `blue-data-web-api` | `uvicorn web_api.main:app` |
 | CLI | `blue-data-web-cli` | `blue-web` |
 
-The MCP server (`platform/web-mcp/`) is not published separately — it is run directly via `python platform/web-mcp/src/server.py` or invoked by an MCP host over stdio.
+The MCP server (`platform/web-mcp/`) is not published separately — it is run directly via `python platform/web-mcp/src/web_mcp/server.py` or invoked by an MCP host over stdio.
 
 ---
 
@@ -95,7 +95,7 @@ The MCP server communicates over **stdio** — it is launched by the MCP host ra
 ```bash
 # Direct invocation (for testing)
 BLUE_WEB_REDIS_HOST=localhost BLUE_WEB_EMBEDDING=openai OPENAI_API_KEY=sk-... \
-  python platform/web-mcp/src/server.py
+  python platform/web-mcp/src/web_mcp/server.py
 ```
 
 MCP host config entry (e.g. `claude_desktop_config.json`):
@@ -105,7 +105,7 @@ MCP host config entry (e.g. `claude_desktop_config.json`):
     "mcpServers": {
         "blue-data-web": {
             "command": "python",
-            "args": ["/path/to/blue-data-web-source/platform/web-mcp/src/server.py"],
+            "args": ["/path/to/blue-data-web-source/platform/web-mcp/src/web_mcp/server.py"],
             "env": {
                 "BLUE_WEB_REDIS_HOST": "localhost",
                 "BLUE_WEB_EMBEDDING": "openai",

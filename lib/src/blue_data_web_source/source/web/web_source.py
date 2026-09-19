@@ -112,6 +112,7 @@ class WebDataSource(DataSource):
         BLUE_WEB_MAX_WORKERS      concurrent fetch threads; default: 10
         BLUE_WEB_ENRICHER         none | basic | llm  (default: basic)
         BLUE_WEB_LLM_MODEL        OpenAI model for llm enricher; default: gpt-4o-mini
+        TAVILY_API_KEY            required for WEB.SEARCH_WEB (read by TavilySearchProvider on first call)
         """
         import os
 

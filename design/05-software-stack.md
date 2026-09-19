@@ -149,7 +149,7 @@ Storage is provided by `blue-data` via the `VectorSource` abstract base class. `
 |---------|--------|
 | Library | `mcp` / `fastmcp` |
 
-Seven MCP tools: `ensure_index`, `ingest_url`, `ingest_urls`, `crawl_site`, `search`, `search_web`, `extract`. Tool handlers delegate directly to a `WebDataSource` singleton.
+Eight MCP tools: `ensure_index`, `ingest_url`, `ingest_urls`, `crawl_site`, `search`, `search_web`, `extract`, `ingest_feed`. Tool handlers delegate directly to a `WebDataSource` singleton.
 
 ### REST API
 
@@ -159,7 +159,7 @@ Seven MCP tools: `ensure_index`, `ingest_url`, `ingest_urls`, `crawl_site`, `sea
 | ASGI server | Uvicorn (`uvicorn[standard]>=0.29.0`) |
 | Port | 8002 |
 
-Seven routes under `/web/` mirror the seven ops. Request/response models are Pydantic `BaseModel` subclasses. No business logic in the route handlers — all calls delegate to `WebDataSource.execute_query`.
+Eight routes under `/web/` (one `GET /web/health` + seven POST handlers for the core ops). Request/response models are Pydantic `BaseModel` subclasses. No business logic in the route handlers — all calls delegate to `WebDataSource.execute_query`. `WEB.FIND`, `WEB.FIND_THEN_SEARCH`, `WEB.GRAPH_NEIGHBORS`, and `WEB.GRAPH_QUERY` are library-only — no REST API routes.
 
 ### CLI
 

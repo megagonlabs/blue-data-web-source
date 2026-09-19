@@ -1,12 +1,29 @@
 """MCP server exposing blue-data-web-source as AI-callable tools.
 
+Eight tools: ensure_index, ingest_url, ingest_urls, crawl_site, ingest_feed,
+search, search_web, extract.
+
+Not exposed (library-only): WEB.FIND, WEB.FIND_THEN_SEARCH, WEB.GRAPH_NEIGHBORS,
+WEB.GRAPH_QUERY. These require RecordStore and GraphSource components that are not
+wired by WebDataSource.from_env() and therefore cannot be offered as general-purpose
+MCP tools without additional configuration support.
+
+This server exposes tools only; no MCP resources are defined. All operations are
+stateful (they write to or read from a vector store) rather than static reads,
+so the resource model does not apply.
+
+Error convention: all errors are returned as a payload-level JSON string
+``{"error": "<prefix>: <message>"}``. Exceptions are never raised to the MCP
+transport layer — callers always receive a parseable JSON string regardless of
+outcome, and ``isError: true`` is never set by this server.
+
 Run:
-    python platform/web-mcp/src/server.py
+    python platform/web-mcp/src/web_mcp/server.py
 
 Configure via environment variables:
 
     BLUE_WEB_EMBEDDING          openai | dummy  (default: dummy)
-    OPENAI_API_KEY              required when BLUE_WEB_EMBEDDING=openai
+    OPENAI_API_KEY              required when BLUE_WEB_EMBEDDING=openai or BLUE_WEB_ENRICHER=llm
     OPENAI_EMBEDDING_MODEL      default: text-embedding-3-small
     BLUE_WEB_REDIS_HOST         Redis host; omit to run without a vector store
     BLUE_WEB_REDIS_PORT         default: 6379
@@ -20,9 +37,10 @@ Configure via environment variables:
     TAVILY_API_KEY              required for search_web tool (Tavily backend)
 """
 import json
-from typing import Optional
+from typing import Annotated, Optional
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import Field
 
 mcp = FastMCP("blue-web-source")
 
@@ -42,7 +60,9 @@ def _get_source():
 # ── Tools ─────────────────────────────────────────────────────────────────────
 
 @mcp.tool()
-def ensure_index(collection: str = "web") -> str:
+def ensure_index(
+    collection: Annotated[str, Field(description="Vector index collection name to create.")] = "web",
+) -> str:
     """Create the vector index for a collection.
 
     Must be called once before the first ingest when using a vector store.
@@ -51,13 +71,16 @@ def ensure_index(collection: str = "web") -> str:
     """
     try:
         _get_source().execute_query({"op": "WEB.ENSURE_INDEX", "collection": collection})
-        return json.dumps({"status": "ok", "collection": collection})
+        return json.dumps({"collection": collection})
     except Exception as exc:
-        return json.dumps({"error": str(exc)})
+        return json.dumps({"error": f"Ensure index failed: {exc}"})
 
 
 @mcp.tool()
-def ingest_url(url: str, collection: str = "web") -> str:
+def ingest_url(
+    url: Annotated[str, Field(description="URL of the web page to fetch and ingest.")],
+    collection: Annotated[str, Field(description="Vector index collection name.")] = "web",
+) -> str:
     """Fetch a web page, extract its main content, chunk it, and store it.
 
     Strips boilerplate, navigation, and CMS cross-reference fragments.
@@ -76,7 +99,7 @@ def ingest_url(url: str, collection: str = "web") -> str:
             return json.dumps({"error": "No content extracted — page may be a login wall or nav-only"})
         first = records[0]
         return json.dumps({
-            "page_id": first["chunk_id"].rsplit("_chunk_", 1)[0],
+            "page_id": first.get("page_id"),
             "url": first["url"],
             "domain": first["domain"],
             "title": first.get("title"),
@@ -89,7 +112,10 @@ def ingest_url(url: str, collection: str = "web") -> str:
 
 
 @mcp.tool()
-def ingest_urls(urls: list[str], collection: str = "web") -> str:
+def ingest_urls(
+    urls: Annotated[list[str], Field(description="List of web page URLs to fetch and ingest.")],
+    collection: Annotated[str, Field(description="Vector index collection name.")] = "web",
+) -> str:
     """Fetch and ingest multiple web pages in one call.
 
     Equivalent to calling ingest_url for each URL. Pages that fail to extract
@@ -114,11 +140,14 @@ def ingest_urls(urls: list[str], collection: str = "web") -> str:
 
 @mcp.tool()
 def crawl_site(
-    url: str,
-    depth: int = 1,
-    max_pages: int = 10,
-    same_domain_only: bool = True,
-    collection: str = "web",
+    url: Annotated[str, Field(description="Seed URL for the BFS crawl.")],
+    depth: Annotated[int, Field(description="Maximum hop depth from the seed URL.", ge=1)] = 1,
+    max_pages: Annotated[int, Field(description="Hard cap on pages ingested regardless of depth.", ge=1)] = 10,
+    same_domain_only: Annotated[bool, Field(
+        description="Restrict crawl to the seed URL's domain (default True). "
+                    "CLI equivalent: absence of the --allow-external flag.",
+    )] = True,
+    collection: Annotated[str, Field(description="Vector index collection name.")] = "web",
 ) -> str:
     """BFS-crawl a site starting from a seed URL and ingest all reachable pages.
 
@@ -151,9 +180,9 @@ def crawl_site(
 
 @mcp.tool()
 def search(
-    query: str,
-    collection: str = "web",
-    k: int = 5,
+    query: Annotated[str, Field(description="Natural-language search query.")],
+    collection: Annotated[str, Field(description="Vector index collection name to search.")] = "web",
+    k: Annotated[int, Field(description="Maximum number of chunks to return.", ge=1)] = 5,
 ) -> str:
     """Search ingested web pages by semantic similarity.
 
@@ -182,17 +211,15 @@ def search(
                 hit["date"] = r["date"]
             hits.append(hit)
         return json.dumps({"results": hits, "count": len(hits)})
-    except ValueError as exc:
-        return json.dumps({"error": str(exc)})
     except Exception as exc:
         return json.dumps({"error": f"Search failed: {exc}"})
 
 
 @mcp.tool()
 def search_web(
-    query: str,
-    k: int = 5,
-    collection: str = "web",
+    query: Annotated[str, Field(description="Search query sent to the live web search API (Tavily).")],
+    collection: Annotated[str, Field(description="Vector index collection name where results are stored.")] = "web",
+    k: Annotated[int, Field(description="Number of URLs to fetch from the search API; each is chunked and ranked.", ge=1)] = 5,
 ) -> str:
     """Search the live web, ingest the top results, and return ranked chunks.
 
@@ -229,18 +256,17 @@ def search_web(
 
 @mcp.tool()
 def extract(
-    url: str,
-    schema: str,
+    url: Annotated[str, Field(description="URL of the web page to fetch and extract fields from.")],
+    schema: Annotated[str, Field(
+        description='JSON-encoded JSON Schema describing the fields to extract. '
+                    'Example: \'{"properties": {"title": {"type": "string"}, "price": {"type": "number"}}}\'',
+    )],
 ) -> str:
     """Extract structured fields from a web page using a caller-supplied JSON Schema.
 
     Fetches the URL, extracts the main body text, then calls an LLM to fill in
     the fields described by the JSON Schema. Returns a JSON object whose keys
     match the schema properties.
-
-    The ``schema`` parameter must be a JSON-encoded JSON Schema object. Example::
-
-        schema = '{"properties": {"title": {"type": "string"}, "price": {"type": "number"}}}'
 
     Requires OPENAI_API_KEY and ``pip install 'blue-data-web-source[openai]'``.
     """
@@ -252,27 +278,32 @@ def extract(
             "url": url,
             "schema": schema_dict,
         })
-        return json.dumps(result)
+        return json.dumps({"url": url, "result": result})
     except Exception as exc:
         return json.dumps({"error": f"Extract failed: {exc}"})
 
 
 @mcp.tool()
 def ingest_feed(
-    url: str,
-    since: Optional[str] = None,
-    max_entries: Optional[int] = None,
-    collection: str = "web",
+    url: Annotated[str, Field(description="URL of the RSS or Atom feed.")],
+    since: Annotated[Optional[str], Field(
+        description="ISO 8601 cutoff date (e.g. '2026-08-01T00:00:00Z'). "
+                    "Only entries published at or after this date are ingested. "
+                    "Entries without a publication date are always included.",
+    )] = None,
+    max_entries: Annotated[Optional[int], Field(
+        description="Maximum number of feed entries to process after date filtering.",
+        ge=1,
+    )] = None,
+    collection: Annotated[str, Field(description="Vector index collection name.")] = "web",
 ) -> str:
     """Fetch an RSS or Atom feed and ingest all articles.
 
     Parses the feed, fetches each article URL, extracts its main content,
     and stores it as searchable chunks. Articles that fail to load are skipped.
 
-    Use ``since`` (ISO 8601, e.g. '2026-08-01T00:00:00Z') to only ingest
-    entries published at or after a cutoff date — useful when running on a
-    schedule to pick up only new content. Entries without a publication date
-    are always included.
+    Use ``since`` to only ingest entries published at or after a cutoff date —
+    useful when running on a schedule to pick up only new content.
 
     When a freshness store is configured, articles whose content has not changed
     since the last call are also skipped without re-embedding.

@@ -480,7 +480,7 @@ class MySearchProvider(WebSearchProvider):
 
 ## Natural language interface
 
-`execute_query_nl` accepts plain-English instructions and dispatches the corresponding `WEB.*` op using Claude tool use (Anthropic). Supports ingest, search, and index operations. Requires `pip install 'blue-data-web-source[nl]'` and `ANTHROPIC_API_KEY`.
+`execute_query_nl` accepts plain-English instructions and dispatches the corresponding `WEB.*` op using Claude tool use (Anthropic). Supports ingest, search, and index operations. Requires `pip install 'blue-data-web-source[llm]'` and `ANTHROPIC_API_KEY`.
 
 ```python
 source = WebDataSource(
@@ -501,6 +501,8 @@ The NL interface uses Claude tool use with `tool_choice={"type": "any"}` — a t
 ---
 
 ## Simple op interface
+
+Source of truth with all 11 ops and full optional-field list: [api-reference.md](api-reference.md).
 
 Six operations — consistent with Blue's query model:
 

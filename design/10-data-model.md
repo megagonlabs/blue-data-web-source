@@ -165,7 +165,7 @@ class WebChunkRecord:
     chunk_index: int
     text: str
     fetch_timestamp: str
-    # Optional — omitted from to_dict() when None
+    # Optional — omitted from to_dict() when None or empty
     title: Optional[str] = None
     author: Optional[str] = None
     date: Optional[str] = None
@@ -177,7 +177,10 @@ class WebChunkRecord:
     keywords: Optional[List[str]] = None
     publisher: Optional[str] = None
     canonical_url: Optional[str] = None
+    page_id: Optional[str] = None
     embedding: Optional[List[float]] = None
+    entities: List[Dict[str, Any]] = field(default_factory=list)
+    semantic_hints: Dict[str, Any] = field(default_factory=dict)
 ```
 
 **Required fields (always present in `to_dict()` output):**
@@ -207,13 +210,16 @@ class WebChunkRecord:
 | `publisher` | str | `StructuredMetadata.publisher` |
 | `canonical_url` | str | `StructuredMetadata.canonical_url` |
 | `embedding` | list[float] | Embedding vector; present only when `embedding_model` is set; omitted by `to_dict()` |
+| `page_id` | str | `"web_" + sha256(final_url)[:16]`; set on every chunk by `WebPipeline` |
+| `entities` | list[dict] | Entity dicts from `BasicEnricher`; omitted from `to_dict()` when empty |
+| `semantic_hints` | dict | Semantic hint dict from enricher; omitted from `to_dict()` when empty |
 
 **Invariants:**
 
 - `chunk_id` is derived deterministically from `final_url` — the same URL always produces the same chunk IDs. Re-ingestion is an upsert at the vector store level, never a duplicate.
 - `description` is set on chunk 0 only. `WebPipeline` passes `description` only when `idx == 0`.
 - `to_dict()` omits fields with `None` values. Callers must use `record.get("field")`, not `record["field"]`, for optional fields.
-- `entities` from `BasicEnricher` is attached to the dict **externally** by `WebPipeline` after `to_dict()` — it is not a `WebChunkRecord` field.
+- `entities` and `semantic_hints` are proper `WebChunkRecord` fields populated at construction time by `WebPipeline`. They are omitted from `to_dict()` output only when empty (empty list / empty dict).
 
 ---
 

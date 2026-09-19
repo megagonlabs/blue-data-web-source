@@ -9,7 +9,7 @@ Each entry records a significant design decision: what was decided, why, and wha
 **Date:** 2025-Q1  
 **Status:** Accepted
 
-**Decision:** `chunk_id` is derived from `sha256(final_url.encode())[:16]` — the first 16 hex characters of the URL hash, followed by `_chunk_{index:04d}`. The `final_url` (after redirect resolution) is the canonical identity of a page.
+**Decision:** `page_id` is `"web_" + sha256(final_url.encode())[:16]` — the literal prefix `web_` followed by the first 16 hex characters of the URL hash. `chunk_id` follows `{page_id}_chunk_{idx:04d}`. The `final_url` (after redirect resolution) is the canonical identity of a page.
 
 **Rationale:** Content-addressable IDs make re-ingest idempotent. The same URL always produces the same chunk IDs, so vector store upsert overwrites rather than duplicates. No external ID registry is needed. Using `final_url` (not the input URL) ensures that redirect chains always resolve to the same identity.
 

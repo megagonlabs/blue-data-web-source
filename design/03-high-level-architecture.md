@@ -68,7 +68,7 @@ Four interface adapters sit in front of `WebDataSource` and delegate to it. They
 
 **MCP Server** — Exposes `ensure_index`, `ingest_url`, `ingest_urls`, `crawl_site`, `search`, `search_web`, `extract`, and `ingest_feed` as MCP tools, enabling LLM agents to ingest and search web content within an agentic context.
 
-**REST API** — HTTP/JSON interface (FastAPI, port 8002). Eight routes under `/web/` mirror the eight op codes. No business logic in handlers — all calls delegate to `WebDataSource`.
+**REST API** — HTTP/JSON interface (FastAPI, port 8002). Eight routes under `/web/` (one health check + seven POST handlers covering the core ops). `WEB.FIND`, `WEB.FIND_THEN_SEARCH`, `WEB.GRAPH_NEIGHBORS`, and `WEB.GRAPH_QUERY` are library-only. No business logic in handlers — all calls delegate to `WebDataSource`.
 
 **CLI** — Click command group (`blue-web`). Seven commands: `ensure-index`, `ingest`, `crawl`, `feed`, `search`, `search-web`, `extract`.
 
@@ -76,7 +76,7 @@ Four interface adapters sit in front of `WebDataSource` and delegate to it. They
 
 ### WebDataSource
 
-The top-level public entry point. Extends blue-data's `DataSource` ABC. Owns a single `WebPipeline` instance and dispatches on seven op codes: `WEB.ENSURE_INDEX`, `WEB.INGEST`, `WEB.CRAWL`, `WEB.INGEST_FEED`, `WEB.EXTRACT`, `WEB.SEARCH`, `WEB.SEARCH_WEB`.
+The top-level public entry point. Extends blue-data's `DataSource` ABC. Owns a single `WebPipeline` instance and dispatches on eleven op codes: `WEB.ENSURE_INDEX`, `WEB.INGEST`, `WEB.CRAWL`, `WEB.INGEST_FEED`, `WEB.EXTRACT`, `WEB.SEARCH`, `WEB.SEARCH_WEB`, `WEB.FIND`, `WEB.FIND_THEN_SEARCH`, `WEB.GRAPH_NEIGHBORS`, `WEB.GRAPH_QUERY`.
 
 ---
 

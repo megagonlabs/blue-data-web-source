@@ -10,7 +10,7 @@ Requires the MCP server to be running in a separate terminal:
     BLUE_WEB_EMBEDDING=openai \\
     OPENAI_API_KEY=sk-... \\
     BLUE_WEB_REDIS_HOST=localhost \\
-    python src/server.py
+    python src/web_mcp/server.py
 
 Then run this demo:
 
@@ -39,7 +39,7 @@ except ImportError:
     sys.exit(1)
 
 MCP_SERVER_PATH = os.path.join(
-    os.path.dirname(__file__), "../../platform/web-mcp/src/server.py"
+    os.path.dirname(__file__), "../../platform/web-mcp/src/web_mcp/server.py"
 )
 
 W = 68
@@ -69,7 +69,7 @@ async def run_agent():
     _hr()
     _ok(f"MCP server path : {MCP_SERVER_PATH}")
     _ok( "Model           : gpt-4o-mini")
-    _ok( "Tools exposed   : ensure_index, ingest_url, ingest_urls, crawl_site, search, search_web")
+    _ok( "Tools exposed   : ensure_index, ingest_url, ingest_urls, crawl_site, ingest_feed, search, search_web, extract")
 
     print()
     print("  Connecting to MCP server via stdio transport…")

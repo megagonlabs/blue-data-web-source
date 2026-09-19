@@ -1,8 +1,10 @@
 # blue-data-web-source
 
+Ingest web pages, RSS feeds, and live search results into a queryable vector index.
+
 Web pages are live data — they update on a schedule, appear through feeds, and belong alongside SQL tables, documents, and graph stores in an agent's data layer. `blue-data-web-source` handles the full pipeline from URL to queryable vector index, with freshness tracking that makes incremental updates cheap and feed subscription that makes scheduled monitoring automatic. It plugs into blue-data's `DataRegistry` so web content becomes a first-class member of the same intelligence layer as the rest of your data.
 
-→ **[Full feature list](docs/features.md)** · **[Installation](#installation)** · **[Ops reference](#ops-reference)** · **[Architecture](#architecture)** · **[MCP server](docs/mcp.md)** · **[Testing](#running-tests)**
+→ **[Quickstart](docs/quickstart.md)** · **[Docs](docs/README.md)** · **[Examples](examples/README.md)** · **[Full feature list](docs/features.md)** · **[Installation](#installation)** · **[Ops reference](#ops-reference)** · **[Architecture](#architecture)** · **[MCP server](docs/mcp.md)** · **[Testing](#running-tests)**
 
 ---
 
@@ -124,7 +126,7 @@ Not the only RSS loader or web crawler. LangChain and LlamaIndex both have RSS l
 - **Freshness tracking** — content-hash skip per URL; cross-URL dedup skips identical text from a different URL; `MemoryFreshnessStore` or `FileFreshnessStore`
 - **JSON-LD / OpenGraph metadata** — `MetadataExtractor` parses structured metadata from every page; enriches `author`, `date`, `description` when trafilatura finds none; adds `schema_type`, `keywords`, `publisher`, `canonical_url` to every chunk
 - **Natural language interface** — `execute_query_nl` maps plain English to `WEB.*` ops via Claude tool use
-- **MCP server** — all ops exposed as MCP tools for agent use
+- **MCP server** — eight MCP tools covering the core ops (WEB.INGEST is split into `ingest_url` and `ingest_urls`; see [docs/mcp.md](docs/mcp.md)); WEB.FIND, WEB.FIND_THEN_SEARCH, WEB.GRAPH_NEIGHBORS, WEB.GRAPH_QUERY are library-only (require RecordStore/GraphSource not wired by `from_env()`)
 
 ---
 
@@ -145,6 +147,15 @@ blue-data-web-source/
 └── examples/
 ```
 
+### Packages
+
+| Package | Description | README |
+|---------|-------------|--------|
+| `lib/` | Core Python library (`blue-data-web-source`) | [README](lib/README.md) |
+| `platform/web-mcp/` | MCP server — 8 tools covering the core ops (FIND/GRAPH ops are library-only) | [README](platform/web-mcp/README.md) |
+| `platform/web-cli/` | `blue-web` CLI — 7 commands covering the core ops (FIND/GRAPH ops are library-only) | [README](platform/web-cli/README.md) |
+| `platform/web-api/` | FastAPI REST API — 7 routes covering the core ops (FIND/GRAPH ops are library-only) | [README](platform/web-api/README.md) |
+
 ---
 
 ## Requirements
@@ -156,7 +167,7 @@ blue-data-web-source/
 - Optional: `[openai]` — `OpenAIEmbeddingModel`
 - Optional: `[redis]` — `RedisVectorSource`
 - Optional: `[feed]` — RSS/Atom feed ingestion (`feedparser`)
-- Optional: `[nl]` — natural language interface via Claude (`execute_query_nl`)
+- Optional: `[llm]` — natural language interface via Claude (`execute_query_nl`)
 
 ```bash
 export OPENAI_API_KEY=sk-...        # for OpenAIEmbeddingModel
@@ -168,6 +179,8 @@ export TAVILY_API_KEY=tvly-...      # for WEB.SEARCH_WEB
 
 ## Installation
 
+Full installation guide (extras, env vars, platform adapters): [docs/installation.md](docs/installation.md).
+
 `blue-data-web-source` depends on `blue-data` and `blue-data-doc-source`. Install them from their local paths first:
 
 ```bash
@@ -178,14 +191,16 @@ pip install -e /path/to/blue-data-doc-source
 pip install -e lib/
 ```
 
+> Replace `/path/to/blue-data` and `/path/to/blue-data-doc-source` with the paths where you cloned those repos.
+
 Optional extras:
 
 ```bash
 pip install -e "lib/[openai]"               # OpenAI embedding models
 pip install -e "lib/[redis]"                # Redis vector store
 pip install -e "lib/[feed]"                 # RSS/Atom feed ingestion (feedparser)
-pip install -e "lib/[nl]"                   # Natural language interface (Claude)
-pip install -e "lib/[openai,redis,feed,nl,dev]"  # everything + dev/test tools
+pip install -e "lib/[llm]"                  # Natural language interface (Claude)
+pip install -e "lib/[all,dev]"              # everything + dev/test tools
 ```
 
 ---
@@ -198,7 +213,7 @@ Ingest a URL — no embeddings required to inspect extracted chunks:
 from blue_data_web_source.source.web.pipeline import WebPipeline
 
 pipeline = WebPipeline(chunk_size=500, overlap=100)
-records = pipeline.ingest("https://en.wikipedia.org/wiki/Python_(programming_language)")
+records = pipeline.ingest("https://python.org")
 
 for r in records:
     print(r["chunk_id"], r["domain"], r["text"][:80])
@@ -348,6 +363,8 @@ if isinstance(result, FindResult) and result.status == "partial":
 
 ## Ops reference
 
+Source of truth with full optional-field list: [docs/api-reference.md](docs/api-reference.md).
+
 | Op | Required fields | Optional fields | Returns |
 |---|---|---|---|
 | `WEB.ENSURE_INDEX` | — | `collection` | `None` |
@@ -395,6 +412,8 @@ if isinstance(result, FindResult) and result.status == "partial":
 
 ## Architecture
 
+Full architecture reference with per-layer detail: [docs/architecture.md](docs/architecture.md).
+
 ```
 URL / Feed URL
   → fetcher/      — WebFetcher: httpx GET with redirect following and configurable timeout
@@ -425,6 +444,8 @@ When `classifier=` is set: every ingested page is classified (page type), fields
 **`VectorSource`** is Blue's abstraction. The pipeline accepts any `VectorSource` implementation — no adapter layer needed.
 
 ### WebChunkRecord schema
+
+Source of truth: [docs/api-reference.md](docs/api-reference.md).
 
 Every ingested chunk is serialised via `WebChunkRecord.to_dict()`. Optional fields are omitted when `None`.
 

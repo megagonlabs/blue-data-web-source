@@ -1,6 +1,6 @@
 # MCP Server
 
-The MCP server exposes blue-data-web-source as six AI-callable tools over the Model Context Protocol. Any MCP-compatible agent — Claude Desktop, Claude Code, or a custom agent using the MCP SDK — can ingest web pages, crawl sites, search content, and query the live web without any custom integration code.
+The MCP server exposes blue-data-web-source as eight AI-callable tools over the Model Context Protocol. Any MCP-compatible agent — Claude Desktop, Claude Code, or a custom agent using the MCP SDK — can ingest web pages, crawl sites, search content, and query the live web without any custom integration code.
 
 ## Tools
 
@@ -10,21 +10,33 @@ The MCP server exposes blue-data-web-source as six AI-callable tools over the Mo
 | `ingest_url` | Fetch, extract, chunk, embed, and upsert a single web page |
 | `ingest_urls` | Batch ingest multiple URLs in one call |
 | `crawl_site` | BFS-crawl a site from a seed URL |
+| `ingest_feed` | Fetch an RSS/Atom feed and ingest each article |
 | `search` | Semantic search over ingested pages |
 | `search_web` | Live web search via Tavily, ingest results, return ranked chunks |
 | `extract` | Fetch a URL and extract typed fields using a JSON Schema (calls OpenAI) |
 
+**Tools only — no MCP resources.** All operations write to or read from a vector store; none are static reads that map naturally to a resource URI.
+
+**Wire format:** MCP tools always return JSON strings — the MCP protocol fixes the output format. There is no `--json` or `--format` flag equivalent for MCP. The `--json` flag in the CLI switches between human-readable and machine-readable output; that distinction does not exist here because MCP tool results are always JSON.
+
+**Library-only operations (not exposed as tools):** `WEB.FIND`, `WEB.FIND_THEN_SEARCH`, `WEB.GRAPH_NEIGHBORS`, `WEB.GRAPH_QUERY`. These require `RecordStore` and `GraphSource` components that are not configurable via `BLUE_WEB_*` environment variables and therefore cannot be wired by `WebDataSource.from_env()`. Use these ops directly through the Python library when you need classification, field filtering, or graph traversal.
+
 ## Installation
 
 ```bash
-pip install -e lib/
-pip install mcp fastmcp
+pip install -e platform/web-mcp/
 ```
 
-For OpenAI embeddings:
+This installs the MCP server and all library dependencies. For OpenAI embeddings add the extra:
 
 ```bash
-pip install -e "lib/[openai]"
+pip install -e "platform/web-mcp/[openai]"
+```
+
+Or use the convenience script that resolves sibling repos automatically:
+
+```bash
+bash platform/web-mcp/scripts/install.sh
 ```
 
 ## Configuration
@@ -56,7 +68,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
   "mcpServers": {
     "blue-web-source": {
       "command": "python3",
-      "args": ["/path/to/blue-data-web-source/platform/web-mcp/src/server.py"],
+      "args": ["/path/to/blue-data-web-source/platform/web-mcp/src/web_mcp/server.py"],
       "env": {
         "BLUE_WEB_EMBEDDING": "openai",
         "OPENAI_API_KEY": "sk-...",
@@ -69,7 +81,9 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 }
 ```
 
-Restart Claude Desktop after saving. The seven tools will appear in the tool picker.
+> Replace `/path/to/blue-data-web-source` with the path where you cloned this repo.
+
+Restart Claude Desktop after saving. The eight tools will appear in the tool picker.
 
 ## Running with Claude Code
 
@@ -80,7 +94,7 @@ Add to your project's `.mcp.json` or `~/.claude.json`:
   "mcpServers": {
     "blue-web-source": {
       "command": "python3",
-      "args": ["platform/web-mcp/src/server.py"],
+      "args": ["platform/web-mcp/src/web_mcp/server.py"],
       "env": {
         "BLUE_WEB_EMBEDDING": "openai",
         "OPENAI_API_KEY": "sk-...",
@@ -97,20 +111,20 @@ For development or debugging, run the server directly:
 
 ```bash
 # No Redis, dummy embeddings — useful for local testing
-BLUE_WEB_EMBEDDING=dummy python3 platform/web-mcp/src/server.py
+BLUE_WEB_EMBEDDING=dummy python3 platform/web-mcp/src/web_mcp/server.py
 
 # Full production setup
 BLUE_WEB_EMBEDDING=openai \
 OPENAI_API_KEY=sk-... \
 BLUE_WEB_REDIS_HOST=localhost \
 TAVILY_API_KEY=tvly-... \
-python3 platform/web-mcp/src/server.py
+python3 platform/web-mcp/src/web_mcp/server.py
 ```
 
 The server listens on stdio (MCP standard transport). Use the [MCP Inspector](https://github.com/modelcontextprotocol/inspector) to call tools interactively:
 
 ```bash
-npx @modelcontextprotocol/inspector python3 platform/web-mcp/src/server.py
+npx @modelcontextprotocol/inspector python3 platform/web-mcp/src/web_mcp/server.py
 ```
 
 ## Redis setup
@@ -130,7 +144,7 @@ docker run -d -p 6379:6379 redis/redis-stack-server:latest
 Create the vector index for a collection. Call once before the first ingest. Safe to call multiple times — skips creation if the index already exists.
 
 ```
-ensure_index(collection="web") → {"status": "ok", "collection": "web"}
+ensure_index(collection="web") → {"collection": "web"}
 ```
 
 ### ingest_url
@@ -211,7 +225,7 @@ Optional fields (`title`, `section_title`, `date`) are omitted when not present 
 Live web search via Tavily — fetches fresh pages, ingests them, returns ranked chunks. No prior ingest required. Requires `TAVILY_API_KEY`.
 
 ```
-search_web(query, k=5, collection="web")
+search_web(query, collection="web", k=5)
 → {
     "results": [
       {
@@ -226,11 +240,38 @@ search_web(query, k=5, collection="web")
   }
 ```
 
+### extract
+
+Fetch a URL and extract typed fields using a caller-supplied JSON Schema. Stateless — does not chunk or store. The `schema` parameter must be a JSON-encoded JSON Schema string.
+
+```
+extract(url, schema='{"properties": {"title": {"type": "string"}, "price": {"type": "number"}}}')
+→ {"url": "https://example.com/product", "result": {"title": "Widget Pro", "price": 29.99}}
+```
+
+Requires `OPENAI_API_KEY` and `pip install -e 'platform/web-mcp/[openai]'`.
+
+### ingest_feed
+
+Fetch an RSS or Atom feed and ingest each article. Use `since` (ISO 8601) to skip entries older than a cutoff — useful for daily incremental runs. Entries without a publication date are always included.
+
+```
+ingest_feed(url, since="2026-09-01T00:00:00Z", max_entries=20, collection="web")
+→ {
+    "chunk_count": 34,
+    "articles_ingested": 5,
+    "urls": ["https://text.npr.org/...", ...],
+    "collection": "web"
+  }
+```
+
+Requires `pip install -e 'platform/web-mcp/[feed]'`.
+
 ## Typical agent session
 
 ```
 Agent: ensure_index(collection="research")
-→ {"status": "ok", "collection": "research"}
+→ {"collection": "research"}
 
 Agent: ingest_url(url="https://arxiv.org/abs/2401.00001", collection="research")
 → {"page_id": "web_3a7f...", "domain": "arxiv.org", "chunk_count": 12, ...}
@@ -241,7 +282,7 @@ Agent: crawl_site(url="https://docs.example.com/", depth=1, max_pages=20, collec
 Agent: search(query="transformer attention mechanism", collection="research", k=3)
 → {"results": [{"chunk_id": "...", "text": "...", "url": "...", "section_title": "Method"}, ...], "count": 3}
 
-Agent: search_web(query="latest LLM alignment research 2026", k=5, collection="research")
+Agent: search_web(query="latest LLM alignment research 2026", collection="research", k=5)
 → {"results": [...], "count": 5}
 ```
 

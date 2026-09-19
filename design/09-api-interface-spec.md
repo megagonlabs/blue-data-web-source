@@ -16,74 +16,71 @@ The main orchestrator. Constructed once per process via `config.py` in each plat
 class WebPipeline:
     def __init__(
         self,
-        embedding_model: EmbeddingModel | None = None,   # default: DummyEmbeddingModel
-        vector_source: VectorSource | None = None,
-        enricher: Enricher | None = None,                 # default: BasicEnricher
-        chunker: Chunker | None = None,                   # default: SectionChunker
         chunk_size: int = 1000,
         overlap: int = 150,
-        default_collection: str = "web",
+        chunker: Chunker | None = None,                   # default: SectionChunker
+        embedding_model: EmbeddingModel | None = None,
+        vector_source: VectorSource | None = None,
+        enricher: Enricher | None = None,                 # default: BasicEnricher
+        collection: str = "web",
         timeout: float = 30.0,
+        freshness_store: FreshnessStore | None = None,
         max_workers: int = 10,
+        classifier: DocumentClassifier | None = None,
+        field_extractor: FieldExtractor | None = None,
+        record_store: RecordStore | None = None,
+        graph_source: GraphSource | None = None,
+        graph_database: str = "web",
     ) -> None: ...
 ```
 
 #### Methods
 
 ```python
-def ensure_index(self, collection: str = "web") -> None: ...
+def ensure_index(self, collection: str | None = None) -> None: ...
     # Create vector index; idempotent
 
-def ingest(self, url: str, collection: str = "web") -> list[dict]: ...
+def ingest(self, url: str, collection: str | None = None) -> list[dict]: ...
     # Fetch, extract, chunk, enrich, embed, upsert; returns list[WebChunkRecord.to_dict()]
     # Returns [] when the extractor finds no main content (login wall, nav-only page)
 
-def ingest_many(self, urls: list[str], collection: str = "web") -> list[dict]: ...
+def ingest_many(self, urls: list[str], collection: str | None = None) -> list[dict]: ...
     # Concurrent multi-URL ingest via ThreadPoolExecutor (max_workers threads)
     # URLs that fail to fetch or extract are skipped; their absence is silent
-
-def search(
-    self,
-    query: str,
-    k: int = 5,
-    collection: str = "web",
-) -> list[dict]: ...
-    # Embed query → KNN; returns ranked WebChunkRecord dicts
-
-def crawl(
-    self,
-    url: str,
-    depth: int = 1,
-    max_pages: int = 10,
-    same_domain_only: bool = True,
-    collection: str = "web",
-) -> list[dict]: ...
-    # BFS from seed URL; respects robots.txt; stops at max_pages
 
 def ingest_feed(
     self,
     url: str,
     since: str | None = None,
     max_entries: int | None = None,
-    collection: str = "web",
+    collection: str | None = None,
 ) -> list[dict]: ...
     # Parse RSS/Atom feed; ingest each article URL; filter by ISO 8601 since date
 
-def extract(
-    self,
-    url: str,
-    schema: dict,
-) -> dict: ...
-    # Fetch page, extract body text, call LLM to fill caller-supplied JSON Schema
-
-def search_web(
+def search(
     self,
     query: str,
     k: int = 5,
-    top_k: int = 5,
-    collection: str = "web",
+    collection: str | None = None,
 ) -> list[dict]: ...
-    # Tavily search → ingest top k URLs on the fly → return top_k ranked chunks
+    # Embed query → KNN; returns ranked WebChunkRecord dicts
+
+def find_records(self, filter: dict, coverage: bool = True) -> FindResult: ...
+    # Filter page records from RecordStore by extracted field values
+
+def find_then_search(
+    self,
+    query: str,
+    find_filter: dict,
+    k: int = 5,
+) -> list[dict]: ...
+    # Filter pages by fields, then vector search within matched pages only
+
+def graph_neighbors(self, entity: str, k: int = 10) -> list[dict]: ...
+    # Find chunks mentioning a named entity via graph traversal
+
+def graph_query(self, node_id: str, depth: int = 1, k: int = 10) -> list[dict]: ...
+    # General graph traversal from any node ID
 ```
 
 ### `WebDataSource`
@@ -106,8 +103,12 @@ class WebDataSource(DataSource):
 | `WEB.EXTRACT` | `url` **or** `urls`, `schema` | — | `dict` (single URL) or `list[dict]` (multiple URLs) |
 | `WEB.SEARCH` | `query` | `k`, `collection` | `list[dict]` |
 | `WEB.SEARCH_WEB` | `query` | `k`, `top_k`, `collection` | `list[dict]` |
+| `WEB.FIND` | `filter` | `coverage` | `FindResult` |
+| `WEB.FIND_THEN_SEARCH` | `query`, `find_filter` | `k` | `list[dict]` |
+| `WEB.GRAPH_NEIGHBORS` | `entity` | `k` | `list[dict]` |
+| `WEB.GRAPH_QUERY` | `node_id` | `depth`, `k` | `list[dict]` |
 
-An unrecognised op raises `WebSourceError`.
+An unrecognised op raises `ValueError`.
 
 ---
 
@@ -319,13 +320,17 @@ Requires `TAVILY_API_KEY`.
 
 ## 3. MCP Server
 
-Entry point: `platform/web-mcp/src/server.py`. Transport: **stdio** (fastmcp). All tools return a JSON-encoded string.
+Entry point: `platform/web-mcp/src/web_mcp/server.py`. Transport: **stdio** (fastmcp). All tools return a JSON-encoded string.
+
+**Tool naming convention:** MCP tool names use domain-appropriate vocabulary aligned with the operation they represent (`ingest_url`, `crawl_site`, `search_web`, `ensure_index`, `extract`) rather than the generic CLI verb list (add/remove/list/create). The rationale: MCP tools are exposed directly to LLMs that need clear, unambiguous names — domain verbs communicate intent more precisely than generic CRUD verbs for an ingestion pipeline.
+
+**Resources:** Tools only — no MCP resources are defined. All operations write to or read from a vector store; none are static reads that map naturally to a resource URI.
 
 ### `ensure_index(collection="web")`
 
 Create the vector index. Idempotent.
 
-**Returns** `{"status": "ok", "collection": "web"}`
+**Returns** `{"collection": "web"}`
 
 ---
 
@@ -365,7 +370,7 @@ Each result includes `chunk_id`, `text`, `url`, `domain`, and optional `title`, 
 
 ---
 
-### `search_web(query, k=5, collection="web")`
+### `search_web(query, collection="web", k=5)`
 
 Live Tavily search → ingest → rank. Requires `TAVILY_API_KEY`.
 
@@ -379,7 +384,7 @@ Extract typed fields from a page using a JSON Schema string.
 
 `schema` must be a JSON-encoded JSON Schema object: `'{"properties": {"title": {"type": "string"}}}'`
 
-**Returns** JSON-encoded extracted fields dict.
+**Returns** `{"url": "https://...", "result": {"title": "...", ...}}` — the caller-specified fields wrapped under `"result"`, plus the source `"url"`.
 
 ---
 

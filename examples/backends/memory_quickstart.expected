@@ -1,0 +1,62 @@
+
+════════════════════════════════════════════════════════════
+  blue-data-web-source — Memory Quickstart
+════════════════════════════════════════════════════════════
+
+  SETUP
+────────────────────────────────────────────────────────────
+  ✓  EmbeddingModel  : DummyEmbeddingModel  (dim=8)
+  ✓  VectorStore     : MemoryVectorSource   (in-process)
+  ✓  Fetcher         : mocked               (no real HTTP)
+
+  STEP 1 — Create vector index
+────────────────────────────────────────────────────────────
+  ✓  Index 'quickstart' created  (dim=8)
+
+  STEP 2 — Ingest articles
+────────────────────────────────────────────────────────────
+  ✓   1 chunks  |  climate.example.com  |  Climate Policy Report 2026
+  ✓   1 chunks  |  text.npr.org  |  China test-launches a ballistic missile in the South Pacific and raises regional concerns
+
+  ✓  Total chunks stored: 2
+
+  STEP 3 — Chunk sample (chunk 0 of each article)
+────────────────────────────────────────────────────────────
+  chunk_id : web_cb9904393a53c312_chunk_0000
+       url      : https://climate.example.com/report
+       domain   : climate.example.com
+       title    : Climate Policy Report 2026
+       text     : Climate Policy Report 2026 Global greenhouse gas emissions continued to rise in 2025 despite interna…
+
+  chunk_id : web_a809489b601142ed_chunk_0000
+       url      : https://text.npr.org/nx-s1-5884537
+       domain   : text.npr.org
+       title    : China test-launches a ballistic missile in the South Pacific and raises regional concerns
+       text     : China test-launches a ballistic missile in the South Pacific and raises regional concerns By The Ass…
+
+
+  STEP 4 — Search (DummyEmbeddingModel: hash-based, not semantic)
+────────────────────────────────────────────────────────────
+  Note: DummyEmbeddingModel produces hash-based vectors;
+        cosine scores are not meaningful for this query.
+
+  #1  score=0.0746  |  climate.example.com
+       title :    Climate Policy Report 2026
+       text  :    Climate Policy Report 2026 Global greenhouse gas emissions continued to rise in …
+
+  #2  score=0.1238  |  text.npr.org
+       title :    China test-launches a ballistic missile in the South Pacific and raises regional concerns
+       text  :    China test-launches a ballistic missile in the South Pacific and raises regional…
+
+
+  SUMMARY
+────────────────────────────────────────────────────────────
+  ✓  Articles ingested : 2
+  ✓  Chunks stored     : 2
+  ✓  No API key required — fully offline
+
+  Next step: swap DummyEmbeddingModel → OpenAIEmbeddingModel
+  for real semantic search similarity scores.
+
+════════════════════════════════════════════════════════════
+

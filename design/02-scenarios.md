@@ -200,12 +200,12 @@ A team exposes the web ingestion pipeline as an MCP server. Claude Desktop can i
   "mcpServers": {
     "web-source": {
       "command": "python",
-      "args": ["-m", "platform.web-mcp.src.server"],
+      "args": ["/path/to/blue-data-web-source/platform/web-mcp/src/web_mcp/server.py"],
       "env": {
         "OPENAI_API_KEY": "sk-...",
         "ANTHROPIC_API_KEY": "sk-ant-...",
-        "REDIS_HOST": "localhost",
-        "REDIS_PORT": "6379"
+        "BLUE_WEB_REDIS_HOST": "localhost",
+        "BLUE_WEB_REDIS_PORT": "6379"
       }
     }
   }

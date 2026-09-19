@@ -1,0 +1,81 @@
+
+════════════════════════════════════════════════════════════════════
+  blue-data-web-source — WebExtractor Feature Demo
+════════════════════════════════════════════════════════════════════
+
+  CASE: Rich metadata article
+  URL : https://research.example.com/paper
+────────────────────────────────────────────────────────────────────
+  title    : Advances in Protein Folding Prediction
+  author   : Dr Alice Chen; Dr Bob Kim
+  date     : 2026-02-20
+  language : —
+  desc     : Review of AlphaFold improvements and lab validation.
+  text len : 800 chars
+
+  ✓  No nav fragments in output
+
+  First 3 non-empty lines of extracted text:
+    Advances in Protein Folding Prediction
+    Machine learning models now predict protein 3D structures with n
+    Experimental Validation
+
+  CASE: Article with inline nav fragments
+  URL : https://news.example.com/tech
+────────────────────────────────────────────────────────────────────
+  title    : Semiconductor Shortage Update
+  author   : —
+  date     : 2025-01-01
+  language : —
+  desc     : —
+  text len : 637 chars
+
+  ✓  No nav fragments in output
+
+  First 3 non-empty lines of extracted text:
+    Semiconductor Shortage Update
+    Global chip supply returned to balance in mid-2025 after a three
+    Asian fabs retained a dominant market share in leading-edge node
+
+  CASE: Login-wall redirect (returns None)
+  URL : https://app.example.com/dashboard
+────────────────────────────────────────────────────────────────────
+  result   : None
+  pipeline : WebPipeline.ingest() returns [] — nothing stored
+
+  CASE: Multilingual article (French)
+  URL : https://fr.example.com/article
+────────────────────────────────────────────────────────────────────
+  title    : Rapport sur l'Énergie Solaire
+  author   : Équipe Scientifique
+  date     : 2025-01-01
+  language : —
+  desc     : —
+  text len : 494 chars
+
+  ✓  No nav fragments in output
+
+  First 3 non-empty lines of extracted text:
+    Rapport sur l'Énergie Solaire
+    La capacité solaire mondiale a dépassé 3 000 gigawatts en 2025, 
+    Perspectives
+
+
+  EXTRACTOR FIELD REFERENCE
+────────────────────────────────────────────────────────────────────
+  Field         Type           Description
+  ───────────── ────────────── ───────────────────────────────────
+  title         str | None     Page <title> or og:title; None if not found
+  author        str | None     meta[name=author]; None if absent
+  date          str | None     article:published_time or heuristic parse; None if absent
+  description   str | None     meta[name=description]; None if absent
+  language      str | None     html[lang] attribute; None if absent
+  text          str            Main article body, boilerplate stripped, nav lines removed
+  url           str            Canonical URL passed to extract()
+
+  NOTE: description is attached to chunk 0 only by WebPipeline.
+        It is NOT repeated on every chunk — avoids metadata noise
+        in later chunks that cover different sub-topics.
+
+════════════════════════════════════════════════════════════════════
+

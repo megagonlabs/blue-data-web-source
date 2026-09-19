@@ -2,11 +2,11 @@
 
 ## Tools
 
-| Tool | Role |
-|------|------|
-| `ruff` | Linter + formatter (replaces Black, isort, flake8) |
-| `pyright` (strict) | Static type checker |
-| `pytest` | Test runner |
+| Tool | Role | Config |
+|------|------|--------|
+| `ruff` | Linter + formatter (replaces Black, isort, flake8) | `lib/pyproject.toml` — `[tool.ruff]` / `[tool.ruff.lint]` |
+| `pyright` (strict) | Static type checker | `lib/pyproject.toml` — `[tool.pyright]` |
+| `pytest` | Test runner | `lib/pyproject.toml` — `[tool.pytest.ini_options]` |
 
 All three are declared as `dev` dependencies. CI fails on any lint, type, or test failure.
 
@@ -108,11 +108,8 @@ def ingest(self, url: str, collection: str = "web") -> list[dict]:
 
 ## Error Handling
 
-- All domain errors subclass a repo-local base: `WebSourceError(Exception)`.
-- Sub-classes are defined per subsystem:
-  - `FetchError` — non-2xx HTTP response or network timeout
-  - `ExtractionError` — extractor contract violation
-  - `CrawlError` — crawl configuration or robots.txt violation
+- Unknown ops passed to `execute_query` raise `ValueError`.
+- HTTP errors from `WebFetcher` raise `httpx.HTTPStatusError` (non-2xx) or `httpx.RequestError` (network failure). Do not catch these at the library layer — let callers decide how to handle them.
 - Do **not** catch and re-raise `Exception` broadly. Let unexpected errors propagate.
 - Only catch at system boundaries (op dispatch in `execute_query`, route handlers, CLI command functions) and convert to HTTP status codes or CLI exit codes.
 - Pages that fail to fetch or extract during `ingest_many` / `WEB.CRAWL` are skipped silently and their URLs are reported in the response — they do not abort the batch.

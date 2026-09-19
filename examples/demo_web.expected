@@ -1,0 +1,14 @@
+(using local fixture: npr_article.html)
+Ingesting: https://text.npr.org/nx-s1-5884537
+  Stored 4 chunks
+
+Searching: "what happened with the missile test in the Pacific"
+[1] text.npr.org  score=0.3057
+    China test-launches a ballistic missile in the South Pacific and raises regional concerns By The Associated Press Tuesday, July 7, 2026 • 1:29 AM EDT BANGKOK — China's navy test-launched a long-range ...
+
+[2] text.npr.org  score=0.3863
+    use them against signatories with territory in the region. "It appears that despite our long-standing concerns about this type of activity, China carried out the test within hours of informing us," Fo...
+
+[3] text.npr.org  score=0.3957
+    commit to a regularized notification arrangement for intercontinental ballistic missile and space launches. Expert says it's a signal to the United States The concern is a result of a lack of clear in...
+

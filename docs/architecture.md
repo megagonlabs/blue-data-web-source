@@ -55,7 +55,7 @@ Responsibilities:
 
 `WebDataSource` adds no logic of its own beyond dispatch and lifecycle management. All ingestion, crawling, search, and index logic lives in `WebPipeline` and `WebCrawler`.
 
-Constructor:
+Constructor (abbreviated — full signature with all parameters in [api-reference.md](api-reference.md)):
 
 ```python
 WebDataSource(

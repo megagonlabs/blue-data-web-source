@@ -34,7 +34,8 @@ lib/tests/
 │   ├── test_extractor.py             # WebExtractor: extraction, nav-fragment stripping, None cases
 │   ├── test_metadata.py              # MetadataExtractor: JSON-LD, OpenGraph, meta tags, canonical
 │   ├── test_pipeline.py              # WebPipeline: ingest, ingest_many, search, ensure_index
-│   ├── test_web_source.py            # WebDataSource: op dispatch, all 7 ops
+│   ├── test_web_source.py            # WebDataSource: op dispatch, all 11 ops
+│   ├── test_web_find.py              # WEB.FIND, WEB.FIND_THEN_SEARCH, WEB.GRAPH_* ops
 │   ├── test_crawler.py               # WebCrawler: BFS, robots.txt, rate limiting, retry
 │   ├── test_feed.py                  # FeedParser: RSS, Atom, date filtering, missing fields
 │   ├── test_freshness.py             # FreshnessStore: skip unchanged, cross-URL dedup
@@ -175,7 +176,7 @@ When adding a new fixture: fetch the page once with `httpx`, save the HTML under
 
 ## 6. E2E Tests
 
-E2E tests exercise the full stack through `WebDataSource.execute_query`. All seven ops are covered. `WebFetcher` is replaced with a mock; all other components (`WebExtractor`, `MetadataExtractor`, `SectionChunker`, `DummyEmbeddingModel`, `MemoryVectorSource`) run for real.
+E2E tests exercise the full stack through `WebDataSource.execute_query`. All eleven ops are covered. `WebFetcher` is replaced with a mock; all other components (`WebExtractor`, `MetadataExtractor`, `SectionChunker`, `DummyEmbeddingModel`, `MemoryVectorSource`) run for real.
 
 E2E tests verify:
 - Op dispatch routes to the correct pipeline method

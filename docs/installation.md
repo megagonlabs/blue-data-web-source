@@ -21,6 +21,34 @@ pip install -e /path/to/blue-data-doc-source
 pip install -e /path/to/blue-data-web-source/lib
 ```
 
+> Replace `/path/to/blue-data` and `/path/to/blue-data-doc-source` with the paths where you cloned those repos.
+
+### Platform adapters
+
+Install individual platform components on top of the library:
+
+```bash
+# CLI (blue-web command)
+pip install -e platform/web-cli/
+
+# REST API (uvicorn web_api.main:app)
+pip install -e platform/web-api/
+
+# MCP server
+pip install -e platform/web-mcp/
+```
+
+Each platform adapter also has a convenience script that installs the library and all sibling deps in one step:
+
+```bash
+bash lib/scripts/install.sh                      # library only
+bash platform/web-cli/scripts/install.sh         # CLI + library
+bash platform/web-api/scripts/install.sh         # REST API + library
+bash platform/web-mcp/scripts/install.sh         # MCP server + library
+```
+
+The scripts resolve `../blue-data` and `../blue-data-doc-source` automatically from the directory layout.
+
 ### Optional extras
 
 ```bash
@@ -31,10 +59,13 @@ pip install -e 'lib/[openai]'
 pip install -e 'lib/[redis]'
 
 # Natural-language interface (Claude tool use via Anthropic SDK)
-pip install -e 'lib/[nl]'
+pip install -e 'lib/[llm]'
 
-# All extras
-pip install -e 'lib/[openai,redis,nl]'
+# RSS/Atom feed support (WEB.INGEST_FEED)
+pip install -e 'lib/[feed]'
+
+# All extras at once
+pip install -e 'lib/[all]'
 ```
 
 ---
@@ -49,7 +80,8 @@ pip install -e 'lib/[openai,redis,nl]'
 | `trafilatura` | ≥1.9.0 | Always (HTML extraction) |
 | `openai` | ≥1.0.0 | `[openai]` extra |
 | `redis[hiredis]` | ≥4.5.0 | `[redis]` extra |
-| `anthropic` | ≥0.40.0 | `[nl]` extra |
+| `anthropic` | ≥0.40.0 | `[llm]` extra |
+| `feedparser` | ≥6.0.0 | `[feed]` extra |
 
 ---
 
@@ -59,8 +91,8 @@ pip install -e 'lib/[openai,redis,nl]'
 |------------|-------------|-------|
 | Redis Stack | `[redis]` extra | Run locally: `docker run -p 6379:6379 redis/redis-stack-server:latest` |
 | `OPENAI_API_KEY` | `[openai]` extra | Used by `OpenAIEmbeddingModel` |
-| `ANTHROPIC_API_KEY` | `[nl]` extra | Used by `NLQueryParser` (Claude tool use) |
-| `TAVILY_API_KEY` | `WEB.SEARCH_WEB` op | Used by `TavilySearchProvider`; requires `pip install tavily-python` |
+| `ANTHROPIC_API_KEY` | `[llm]` extra | Used by `NLQueryParser` (Claude tool use) |
+| `TAVILY_API_KEY` | `WEB.SEARCH_WEB` op | Used by `TavilySearchProvider`; requires `pip install -e 'platform/web-mcp/[tavily]'` or `pip install tavily-python` |
 
 ---
 

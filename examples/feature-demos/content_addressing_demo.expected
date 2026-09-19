@@ -1,0 +1,52 @@
+
+════════════════════════════════════════════════════════════════════
+  blue-data-web-source — Content Addressing & Dedup
+════════════════════════════════════════════════════════════════════
+
+  PART 1 — Deterministic chunk_id from URL
+────────────────────────────────────────────────────────────────────
+  URL      : https://tech.example.com/batteries
+  sha256   : f43a68a0488ca21f95f2bc2f12b82987d74687987d61eb0d4390f4cedcb1d101
+  page_id  : web_f43a68a0488ca21f  (first 16 hex chars)
+  chunk_00 : web_f43a68a0488ca21f_chunk_0000
+  chunk_01 : web_f43a68a0488ca21f_chunk_0001
+
+  ✓  Ingest produced 1 chunks
+  ✓    web_f43a68a0488ca21f_chunk_0000
+
+  PART 2 — Re-ingest same URL (safe idempotency)
+────────────────────────────────────────────────────────────────────
+  ✓  First ingest : ['web_f43a68a0488ca21f_chunk_0000']
+  ✓  Second ingest: ['web_f43a68a0488ca21f_chunk_0000']
+  ✓  chunk_id values are identical — upsert overwrites, no duplicates
+
+  PART 3 — Redirect: UTM-tracked URL → canonical URL
+────────────────────────────────────────────────────────────────────
+  Source URL (fetched) : https://tech.example.com/batteries?utm_source=newsletter
+  Final URL (canonical): https://tech.example.com/batteries
+
+  ✓  Records produced: 1
+  ✓  page_id  (actual)  : web_f43a68a0488ca21f
+  ✓  page_id  (expected): web_f43a68a0488ca21f  ← sha256(final_url)
+  ✓  page_id derived from final_url, not original URL
+  ✓  Fetching with UTM params produces the same chunk IDs as the canonical URL
+
+  PART 4 — Different domain URL → different chunk IDs
+────────────────────────────────────────────────────────────────────
+  URL A chunk_id : web_f43a68a0488ca21f_chunk_0000
+  URL B chunk_id : web_6e8e1d19ef932d16_chunk_0000
+  ✓  Same content, different URL → different chunk IDs (URL is the identity key)
+  ✓  Note: with a FreshnessStore, cross-URL content dedup will skip the 2nd ingest at pipeline level
+
+  ID SCHEME COMPARISON: web-source vs doc-source
+────────────────────────────────────────────────────────────────────
+  Property                       web-source             doc-source
+  ────────────────────────────── ────────────────────── ────────────────────
+  Hash input                     sha256(final_url)      sha256(file bytes)
+  ID format                      web_{h16}_chunk_NNNN   doc_{h16}_chunk_NNNNNN
+  Chunk # padding                4 digits (0000)        6 digits (000000)
+  Re-ingest same                 same IDs (upsert)      same IDs (upsert)
+  UTM redirect                   → canonical final_url  N/A
+
+════════════════════════════════════════════════════════════════════
+

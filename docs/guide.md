@@ -154,7 +154,7 @@ records = source.execute_query_nl("ingest https://text.npr.org/nx-s1-5884537 int
 pages   = source.execute_query_nl("crawl https://docs.example.com up to depth 2, max 20 pages")
 ```
 
-Requires `pip install 'blue-data-web-source[nl]'` and `ANTHROPIC_API_KEY`.
+Requires `pip install 'blue-data-web-source[llm]'` and `ANTHROPIC_API_KEY`.
 
 ---
 
@@ -262,6 +262,8 @@ model = DummyEmbeddingModel(dim=8)                      # deterministic, not rea
 ---
 
 ## Chunk record schema
+
+Source of truth: [api-reference.md](api-reference.md).
 
 Each returned chunk is a dict with:
 

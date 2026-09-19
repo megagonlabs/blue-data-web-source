@@ -1,0 +1,83 @@
+
+════════════════════════════════════════════════════════════════════
+  blue-data-web-source — BFS Crawler Demo
+════════════════════════════════════════════════════════════════════
+
+  MOCK SITE STRUCTURE
+────────────────────────────────────────────────────────────────────
+    /             → links to /research, /news, /about, [external]
+    /research     → links to /research/ai, /research/climate
+    /news         → links to /news/2026-01, /news/2026-02
+    /about        → no outbound links
+    /research/ai  → links back to /research (already seen)
+
+  EXPERIMENT 1 — depth=1  (seed + its direct links)
+────────────────────────────────────────────────────────────────────
+
+  depth=1 result
+    Pages crawled : 4
+    Chunks stored : 4
+       1 chunks  /  (Research Institute)
+       1 chunks  /about  (About the Institute)
+       1 chunks  /news  (Institute News)
+       1 chunks  /research  (Research Areas)
+
+  ✓  External URL 'https://external.org/partner' not crawled (same_domain_only=True)
+
+  EXPERIMENT 2 — depth=2  (seed + links + links-of-links)
+────────────────────────────────────────────────────────────────────
+
+  depth=2 result
+    Pages crawled : 8
+    Chunks stored : 8
+       1 chunks  /  (Research Institute)
+       1 chunks  /about  (About the Institute)
+       1 chunks  /news  (Institute News)
+       1 chunks  /news/2026-01  (January 2026 News)
+       1 chunks  /news/2026-02  (February 2026 News)
+       1 chunks  /research  (Research Areas)
+       1 chunks  /research/ai  (AI Research Group)
+       1 chunks  /research/climate  (Climate Research Group)
+
+  EXPERIMENT 3 — max_pages=3  (early stop)
+────────────────────────────────────────────────────────────────────
+
+  max_pages=3 result
+    Pages crawled : 3
+    Chunks stored : 3
+       1 chunks  /  (Research Institute)
+       1 chunks  /news  (Institute News)
+       1 chunks  /research  (Research Areas)
+
+  ✓  Crawl stops after 3 pages regardless of remaining links in the queue
+
+  EXPERIMENT 4 — same_domain_only=False  (follows external links)
+────────────────────────────────────────────────────────────────────
+
+  same_domain_only=False, depth=1
+    Pages crawled : 5
+    Chunks stored : 5
+       1 chunks  https://external.org/partner  (Partner Organisation)
+       1 chunks  /  (Research Institute)
+       1 chunks  /about  (About the Institute)
+       1 chunks  /news  (Institute News)
+       1 chunks  /research  (Research Areas)
+  ✓  External URL included: https://external.org/partner
+
+  COMPARISON TABLE
+────────────────────────────────────────────────────────────────────
+  Config                               Pages  Chunks
+  ─────────────────────────────────── ────── ───────
+  depth=1, max_pages=20, same_domain       4       4
+  depth=2, max_pages=20, same_domain       8       8
+  depth=2, max_pages=3,  same_domain       3       3
+  depth=1, max_pages=20, cross_domain      5       5
+
+  Notes:
+   • depth counts hops from seed (depth=1 = seed + its links)
+   • max_pages is a hard cap regardless of depth
+   • BFS visits pages in breadth-first order — max_pages cuts the queue
+   • URL dedup is hash-based; back-links to already-seen pages are skipped
+
+════════════════════════════════════════════════════════════════════
+

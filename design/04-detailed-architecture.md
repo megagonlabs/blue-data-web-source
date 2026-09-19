@@ -24,7 +24,7 @@ All four interfaces are thin adapters over the Python library. Each delegates to
 5. **Chunker** splits the extracted body text into `(section_title, text)` pairs (`SectionChunker` default; falls back to window chunking when no headings detected); operates on word count
 6. **Enricher** annotates each chunk with entities and semantic hints (`BasicEnricher` default; one regex pass per chunk, no API cost)
 7. **EmbeddingModel** converts each chunk text to a fixed-dimension float vector
-8. **WebChunkRecord** assembles all fields: `chunk_id` (derived from `sha256(final_url)[:16]_chunk_{index:04d}`), `url`, `domain`, `title`, `date`, `section_title`, `page_id`, `entities`, `semantic_hints`, `metadata` fields
+8. **WebChunkRecord** assembles all fields: `chunk_id` (`web_{sha256(final_url)[:16]}_chunk_{idx:04d}`), `url`, `domain`, `title`, `date`, `section_title`, `page_id`, `chunk_index`, `fetch_timestamp`, `entities`, `semantic_hints`
 9. `WebChunkRecord.to_dict()` omits `None` optional fields
 10. **VectorSource** upserts each chunk; same chunk_id → upsert overwrites rather than duplicates
 
@@ -150,29 +150,30 @@ Supplements fields missing from `ExtractResult`. Makes one pass over raw HTML vi
 ```python
 @dataclass
 class WebChunkRecord:
-    # Always present in to_dict()
-    chunk_id:       str        # sha256(final_url)[:16]_chunk_{index:04d}
-    page_id:        str        # sha256(final_url)[:16]
-    url:            str        # final_url
-    domain:         str        # netloc of final_url
-    text:           str
-    source_type:    str        # "web"
-    entities:       list[dict]
-    semantic_hints: dict
-    metadata:       dict       # ingested_at, chunk_index, page_chunk_count
+    # Required — always present in to_dict()
+    chunk_id:        str        # web_{sha256(final_url)[:16]}_chunk_{index:04d}
+    url:             str        # final_url
+    domain:          str        # netloc of final_url
+    text:            str
+    chunk_index:     int        # 0-based index within the page
+    fetch_timestamp: str        # UTC ISO-8601
 
-    # Optional — omitted from to_dict() when None
-    title:          str | None
-    author:         str | None
-    date:           str | None
-    description:    str | None  # attached to chunk 0 only
-    section_title:  str | None
-    language:       str | None
-    schema_type:    str | None
-    keywords:       list[str] | None
-    publisher:      str | None
-    canonical_url:  str | None
-    embedding:      list[float] | None  # never in to_dict(); passed separately to VectorSource
+    # Optional — omitted from to_dict() when None or empty
+    title:           str | None = None
+    author:          str | None = None
+    date:            str | None = None
+    description:     str | None = None   # attached to chunk 0 only
+    language:        str | None = None
+    section_title:   str | None = None
+    schema_type:     str | None = None
+    keywords:        list[str] | None = None
+    publisher:       str | None = None
+    canonical_url:   str | None = None
+    collection:      str | None = None
+    page_id:         str | None = None   # "web_" + sha256(final_url)[:16]
+    embedding:       list[float] | None = None  # never in to_dict(); passed separately to VectorSource
+    entities:        list[dict] = field(default_factory=list)   # from BasicEnricher; omitted when empty
+    semantic_hints:  dict = field(default_factory=dict)         # omitted when empty
 ```
 
 `chunk_id` determinism: the same `final_url` always produces the same `chunk_id`s. Re-ingesting an unchanged URL is an upsert — no duplicates.

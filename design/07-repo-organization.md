@@ -5,7 +5,13 @@
 ```
 blue-data-web-source/
 │
-├── design/                              # design documents
+├── .gitignore                           # excludes .venv/, __pycache__/, build/, dist/, .env, *.envrc
+├── CLAUDE.md                            # Claude Code instructions for this repo
+├── LICENSE                              # BSD 3-Clause with Attribution / NOTICE Requirement
+├── README.md                            # project overview, quick start, ops reference
+├── presentation.md                      # slide-form overview (internal)
+│
+├── design/                              # design documents (numbered sequence + design-process.md)
 │
 ├── docs/                                # user-facing documentation
 │   ├── architecture.md                  # pipeline layers and component responsibilities
@@ -21,9 +27,13 @@ blue-data-web-source/
 │   └── fixtures/
 │       └── npr_article.html             # saved real article HTML for integration tests
 │
+├── tests/                               # cross-platform boundary tests
+│
 ├── examples/                            # runnable demos (no API key required for most)
-│   ├── mock_fetcher.py                  # shared offline helper: fixture HTML + mock WebFetcher
+│   ├── demo.py                          # full pipeline demo: ingest → embed → search (offline)
+│   ├── demo_web.py                      # end-to-end demo with optional real URLs and --nl-query
 │   ├── ingest_url.py                    # minimal live ingest script
+│   ├── mock_fetcher.py                  # shared offline helper: fixture HTML + mock WebFetcher
 │   ├── README.md
 │   ├── scenario-demos/
 │   │   ├── extraction_demo.py           # extractor fields, boilerplate stripping, None cases
@@ -87,8 +97,10 @@ blue-data-web-source/
 │
 └── platform/                            # external interface services
     ├── web-mcp/                         # MCP server (blue-data-web-mcp)
+    │   ├── pyproject.toml
     │   ├── src/
-    │   │   └── server.py                # fastmcp server; 7 MCP tools; WebDataSource singleton
+    │   │   └── web_mcp/
+    │   │       └── server.py            # fastmcp server; 8 MCP tools; WebDataSource singleton
     │   └── tests/
     │       └── test_server.py
     ├── web-cli/                         # CLI (blue-data-web-cli PyPI package)
@@ -142,7 +154,7 @@ Each external interface is an independent deployable unit under `platform/`. The
 
 | Service | Package | Status | Entry point |
 |---------|---------|--------|------------|
-| `web-mcp/` | — | Implemented | `python3 platform/web-mcp/src/server.py` |
+| `web-mcp/` | — | Implemented | `python3 platform/web-mcp/src/web_mcp/server.py` |
 | `web-cli/` | `blue-data-web-cli` | Implemented | `blue-web` CLI command |
 | `web-api/` | `blue-data-web-api` | Implemented | `blue-data-web-api` or `uvicorn web_api.main:app --port 8002` |
 

@@ -22,7 +22,7 @@ blue-data-web-source is the web acquisition layer for Blue Data Intelligence. It
 - **Deduplicate across URLs** — when a `FreshnessStore` is set, identical text fetched from two different URLs is detected via content hash; the second ingest is skipped silently
 - **Enrich with structured metadata** — `MetadataExtractor` parses JSON-LD, OpenGraph, and standard `<meta>` tags in one pass; adds `schema_type`, `keywords`, `publisher`, and `canonical_url` to every chunk; fills in `author`/`date`/`description` when trafilatura returns `None`
 - **Fetch concurrently** — `ingest_many` and BFS crawl both use a `ThreadPoolExecutor`; per-domain politeness locks prevent hammering a single host
-- **Expose** all operations via blue-data's `DataSource` interface (`WEB.INGEST`, `WEB.EXTRACT`, `WEB.CRAWL`, `WEB.SEARCH_WEB`, `WEB.SEARCH`, `WEB.INGEST_FEED`, `WEB.ENSURE_INDEX`) and a natural-language query interface backed by Claude tool use
+- **Expose** all operations via blue-data's `DataSource` interface (`WEB.INGEST`, `WEB.EXTRACT`, `WEB.CRAWL`, `WEB.SEARCH_WEB`, `WEB.SEARCH`, `WEB.INGEST_FEED`, `WEB.ENSURE_INDEX`, `WEB.FIND`, `WEB.FIND_THEN_SEARCH`, `WEB.GRAPH_NEIGHBORS`, `WEB.GRAPH_QUERY`) and a natural-language query interface backed by Claude tool use
 
 ## Design Philosophy
 
@@ -30,7 +30,7 @@ blue-data-web-source is the web acquisition layer for Blue Data Intelligence. It
 
 **Extraction returns all or nothing** — `WebExtractor.extract()` either returns a result with non-empty body text, or returns `None`. There is no partial extraction. A `None` result causes `WebPipeline.ingest()` to return an empty list — no empty or near-empty chunks are ever stored.
 
-**URL-hash identity** — `chunk_id` is derived from `sha256(final_url)[:16]`, where `final_url` is the URL after all redirects. The same URL always produces the same chunk IDs. Re-ingestion is a safe upsert at the vector store level, never a duplicate.
+**URL-hash identity** — `page_id` is `"web_" + sha256(final_url)[:16]`, where `final_url` is the URL after all redirects. `chunk_id` is `{page_id}_chunk_{idx:04d}`. The same URL always produces the same chunk IDs. Re-ingestion is a safe upsert at the vector store level, never a duplicate.
 
 **Search backends are pluggable** — `WebSearchProvider` is an ABC with a single `search(query, k) -> list[str]` method. `TavilySearchProvider` is the built-in implementation; any search API can be wired in by subclassing.
 

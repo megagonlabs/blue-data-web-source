@@ -1,0 +1,84 @@
+
+════════════════════════════════════════════════════════════════════
+  blue-data-web-source — Multi-URL Batch Ingest
+════════════════════════════════════════════════════════════════════
+
+  SETUP
+────────────────────────────────────────────────────────────────────
+  ✓  Collection 'multi_url' ready
+  ✓  3 fixture URLs registered (no real HTTP)
+
+  APPROACH COMPARISON
+────────────────────────────────────────────────────────────────────
+
+  Option A — three separate WEB.INGEST calls:
+    source.execute_query({'op': 'WEB.INGEST', 'url': url1, ...})
+    source.execute_query({'op': 'WEB.INGEST', 'url': url2, ...})
+    source.execute_query({'op': 'WEB.INGEST', 'url': url3, ...})
+
+  Option B — one WEB.INGEST call with urls list:
+    source.execute_query({'op': 'WEB.INGEST', 'urls': [url1, url2, url3], ...})
+
+  Both produce identical results. Use urls list for cleaner code when
+  you have a batch of URLs ready at the same time.
+
+  STEP 1 — Batch ingest (urls list)
+────────────────────────────────────────────────────────────────────
+  ✓  Total chunks returned: 3
+
+     1 chunks  |  climate.example.com  |  Climate Policy Report 2026
+           chunk IDs: web_cb9904393a53c312_chunk_0000 … web_cb9904393a53c312_chunk_0000
+     1 chunks  |  insurance.example.com  |  Health Insurance Policy Summary
+           chunk IDs: web_6025b6c4593d7883_chunk_0000 … web_6025b6c4593d7883_chunk_0000
+     1 chunks  |  text.npr.org  |  China test-launches a ballistic missile in the Sou
+           chunk IDs: web_a809489b601142ed_chunk_0000 … web_a809489b601142ed_chunk_0000
+
+  STEP 2 — Verify chunk structure for each article
+────────────────────────────────────────────────────────────────────
+
+  climate.example.com
+    title    : Climate Policy Report 2026
+    date     : 2026-01-01
+    chunks   : 1  (index 0 … 0)
+    chunk 0  : web_cb9904393a53c312_chunk_0000
+    desc (c0): An overview of global climate policy developments in 2026.…
+    desc on later chunks: none ✓
+
+  insurance.example.com
+    title    : Health Insurance Policy Summary
+    date     : —
+    chunks   : 1  (index 0 … 0)
+    chunk 0  : web_6025b6c4593d7883_chunk_0000
+    desc (c0): Summary of health plan benefits and coverage details.…
+    desc on later chunks: none ✓
+
+  text.npr.org
+    title    : China test-launches a ballistic missile in the South Pacific and raises regional concerns
+    date     : 2026-07-07
+    chunks   : 1  (index 0 … 0)
+    chunk 0  : web_a809489b601142ed_chunk_0000
+    desc on later chunks: none ✓
+
+  STEP 3 — Search across all ingested articles
+────────────────────────────────────────────────────────────────────
+  Note: DummyEmbeddingModel scores are hash-based, not semantic.
+
+  Query: "policy and government commitments"
+
+  #1  score=0.1459  text.npr.org
+       China test-launches a ballistic missile in the South Pacific and raises regional concerns By The Associated Pr…
+
+  #2  score=0.1553  climate.example.com
+       Climate Policy Report 2026 Global greenhouse gas emissions continued to rise in 2025 despite international agr…
+
+  #3  score=0.3048  insurance.example.com
+       Health Insurance Policy Summary This policy provides comprehensive health coverage for eligible members and th…
+
+  SUMMARY
+────────────────────────────────────────────────────────────────────
+  ✓  URLs ingested   : 3
+  ✓  Chunks stored   : 3
+  ✓  Batch ingest ('urls' list) ≡ N individual ingest calls
+
+════════════════════════════════════════════════════════════════════
+
