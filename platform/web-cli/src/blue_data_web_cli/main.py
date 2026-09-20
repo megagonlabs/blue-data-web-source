@@ -80,7 +80,7 @@ def ensure_index(ctx: click.Context, collection: Optional[str]) -> None:
         _err(str(exc))
 
     if ctx.obj["as_json"]:
-        click.echo(json.dumps({"status": "ok", "collection": coll}))
+        click.echo(json.dumps({"collection": coll}))
     else:
         click.echo(f"Index ready: {coll}")
 
@@ -107,13 +107,17 @@ def ingest(ctx: click.Context, urls: tuple[str, ...], collection: Optional[str])
         _err(f"Failed to build source: {exc}")
 
     per_url: dict[str, list] = {}
+    had_failure = False
     for url in urls:
         try:
             records = source.execute_query({"op": "WEB.INGEST", "url": url, "collection": coll})
             per_url[url] = records
+            if not records:
+                had_failure = True
         except Exception as exc:
             click.echo(f"Error ingesting {url}: {exc}", err=True)
             per_url[url] = []
+            had_failure = True
 
     if ctx.obj["as_json"]:
         output = []
@@ -121,6 +125,7 @@ def ingest(ctx: click.Context, urls: tuple[str, ...], collection: Optional[str])
             if records:
                 first = records[0]
                 output.append({
+                    "page_id": first.get("page_id"),
                     "url": url,
                     "title": first.get("title"),
                     "domain": first.get("domain"),
@@ -131,6 +136,8 @@ def ingest(ctx: click.Context, urls: tuple[str, ...], collection: Optional[str])
             else:
                 output.append({"url": url, "error": "no content extracted"})
         click.echo(json.dumps(output[0] if len(output) == 1 else output, indent=2, default=str))
+        if had_failure:
+            sys.exit(1)
         return
 
     if len(urls) == 1:
@@ -156,6 +163,9 @@ def ingest(ctx: click.Context, urls: tuple[str, ...], collection: Optional[str])
             else:
                 click.echo(f"  ✗ {url}  (no content)")
         click.echo(f"\n  collection: {coll}")
+
+    if had_failure:
+        sys.exit(1)
 
 
 # ── crawl ─────────────────────────────────────────────────────────────────────
@@ -200,7 +210,6 @@ def crawl(
 
     if ctx.obj["as_json"]:
         click.echo(json.dumps({
-            "seed": url,
             "chunk_count": len(records),
             "pages_ingested": len(ingested_urls),
             "urls": ingested_urls,
@@ -257,7 +266,6 @@ def feed(
 
     if ctx.obj["as_json"]:
         click.echo(json.dumps({
-            "feed": url,
             "chunk_count": len(records),
             "articles_ingested": len(ingested_urls),
             "urls": ingested_urls,
@@ -376,7 +384,7 @@ def search(ctx: click.Context, query: str, k: int, collection: Optional[str]) ->
         _err(str(exc))
 
     if ctx.obj["as_json"]:
-        click.echo(json.dumps(results, indent=2, default=str))
+        click.echo(json.dumps({"results": results, "count": len(results)}, indent=2, default=str))
         return
     _print_results(results, query)
 
@@ -405,7 +413,7 @@ def search_web(ctx: click.Context, query: str, k: int, collection: Optional[str]
         _err(str(exc))
 
     if ctx.obj["as_json"]:
-        click.echo(json.dumps(results, indent=2, default=str))
+        click.echo(json.dumps({"results": results, "count": len(results)}, indent=2, default=str))
         return
     _print_results(results, query)
 

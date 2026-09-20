@@ -34,6 +34,7 @@ def mock_source():
 def _chunk(url="https://example.com/a", domain="example.com", title="Example Article", n=0):
     return {
         "chunk_id": f"web_abc_{n:04d}",
+        "page_id": "web_abc123",
         "url": url,
         "domain": domain,
         "title": title,
@@ -58,8 +59,8 @@ class TestEnsureIndex:
         result = runner.invoke(cli, ["--json", "ensure-index", "--collection", "test"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert data["status"] == "ok"
         assert data["collection"] == "test"
+        assert "status" not in data
 
     def test_idempotent(self, runner, mock_source):
         mock_source.execute_query.return_value = None
@@ -89,7 +90,8 @@ class TestIngest:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["chunk_count"] == 2
-        assert "url" in data
+        assert data["url"] == "https://example.com/a"
+        assert data["page_id"] == "web_abc123"
 
     def test_multi_url(self, runner, mock_source):
         mock_source.execute_query.side_effect = [
@@ -123,8 +125,19 @@ class TestIngest:
             [],
         ]
         result = runner.invoke(cli, ["ingest", "https://example.com/a", "https://example.com/b"])
-        assert result.exit_code == 0
+        assert result.exit_code != 0
         assert "✗" in result.output
+
+    def test_skipped_url_json_exits_nonzero(self, runner, mock_source):
+        mock_source.execute_query.side_effect = [
+            [_chunk(url="https://example.com/a")],
+            [],
+        ]
+        result = runner.invoke(cli, ["--json", "ingest", "https://example.com/a", "https://example.com/b"])
+        assert result.exit_code != 0
+        data = json.loads(result.output)
+        assert isinstance(data, list)
+        assert any(item.get("error") for item in data)
 
     def test_collection_passed_in_request(self, runner, mock_source):
         mock_source.execute_query.return_value = [_chunk()]
@@ -151,7 +164,9 @@ class TestCrawl:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "pages_ingested" in data
-        assert data["seed"] == "https://example.com"
+        assert "chunk_count" in data
+        assert "urls" in data
+        assert "seed" not in data
 
     def test_depth_and_max_pages_passed(self, runner, mock_source):
         mock_source.execute_query.return_value = []
@@ -191,7 +206,9 @@ class TestFeed:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "articles_ingested" in data
-        assert data["feed"] == "https://example.com/feed.xml"
+        assert "chunk_count" in data
+        assert "urls" in data
+        assert "feed" not in data
 
     def test_since_passed(self, runner, mock_source):
         mock_source.execute_query.return_value = []
@@ -239,8 +256,9 @@ class TestSearch:
         result = runner.invoke(cli, ["--json", "search", "climate change"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert isinstance(data, list)
-        assert data[0]["url"] == "https://example.com/a"
+        assert "results" in data
+        assert data["count"] == 1
+        assert data["results"][0]["url"] == "https://example.com/a"
 
     def test_no_results(self, runner, mock_source):
         mock_source.execute_query.return_value = []
@@ -373,7 +391,8 @@ class TestSearchWeb:
         result = runner.invoke(cli, ["--json", "search-web", "offshore wind"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert isinstance(data, list)
+        assert "results" in data
+        assert data["count"] == 1
 
     def test_no_results(self, runner, mock_source):
         mock_source.execute_query.return_value = []
