@@ -71,7 +71,7 @@ class TestEnsureIndex:
     def test_error_propagates(self, runner, mock_source):
         mock_source.execute_query.side_effect = RuntimeError("Redis not available")
         result = runner.invoke(cli, ["ensure-index"])
-        assert result.exit_code != 0
+        assert result.exit_code == 1
 
 
 # ── ingest ────────────────────────────────────────────────────────────────────
@@ -117,7 +117,7 @@ class TestIngest:
     def test_no_content_single_url_exits_nonzero(self, runner, mock_source):
         mock_source.execute_query.return_value = []
         result = runner.invoke(cli, ["ingest", "https://example.com/empty"])
-        assert result.exit_code != 0
+        assert result.exit_code == 1
 
     def test_skipped_url_shown_in_multi(self, runner, mock_source):
         mock_source.execute_query.side_effect = [
@@ -125,7 +125,7 @@ class TestIngest:
             [],
         ]
         result = runner.invoke(cli, ["ingest", "https://example.com/a", "https://example.com/b"])
-        assert result.exit_code != 0
+        assert result.exit_code == 1
         assert "✗" in result.output
 
     def test_skipped_url_json_exits_nonzero(self, runner, mock_source):
@@ -134,7 +134,7 @@ class TestIngest:
             [],
         ]
         result = runner.invoke(cli, ["--json", "ingest", "https://example.com/a", "https://example.com/b"])
-        assert result.exit_code != 0
+        assert result.exit_code == 1
         data = json.loads(result.output)
         assert isinstance(data, list)
         assert any(item.get("error") for item in data)
@@ -280,7 +280,7 @@ class TestSearch:
     def test_error_propagates(self, runner, mock_source):
         mock_source.execute_query.side_effect = ValueError("No vector store configured")
         result = runner.invoke(cli, ["search", "query"])
-        assert result.exit_code != 0
+        assert result.exit_code == 1
 
 
 # ── extract ───────────────────────────────────────────────────────────────────
@@ -319,13 +319,13 @@ class TestExtract:
         assert result.exit_code == 0
         assert "Widget" in result.output
 
-    def test_no_schema_exits_nonzero(self, runner, mock_source):
+    def test_no_schema_exits_2(self, runner, mock_source):
         result = runner.invoke(cli, ["extract", "https://example.com"])
-        assert result.exit_code != 0
+        assert result.exit_code == 2
 
-    def test_invalid_schema_json_exits_nonzero(self, runner, mock_source):
+    def test_invalid_schema_json_exits_2(self, runner, mock_source):
         result = runner.invoke(cli, ["extract", "https://example.com", "--schema", "not-json"])
-        assert result.exit_code != 0
+        assert result.exit_code == 2
 
     def test_empty_result_shown(self, runner, mock_source):
         mock_source.execute_query.return_value = {}
@@ -336,7 +336,7 @@ class TestExtract:
     def test_error_propagates(self, runner, mock_source):
         mock_source.execute_query.side_effect = RuntimeError("fetch failed")
         result = runner.invoke(cli, ["extract", "https://example.com", "--schema", _SCHEMA_JSON])
-        assert result.exit_code != 0
+        assert result.exit_code == 1
 
 
 # ── BLUE_WEB_ENRICHER config ──────────────────────────────────────────────────
@@ -409,4 +409,4 @@ class TestSearchWeb:
     def test_error_propagates(self, runner, mock_source):
         mock_source.execute_query.side_effect = RuntimeError("TAVILY_API_KEY not set")
         result = runner.invoke(cli, ["search-web", "query"])
-        assert result.exit_code != 0
+        assert result.exit_code == 1

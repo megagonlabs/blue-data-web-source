@@ -46,6 +46,11 @@ def _err(msg: str) -> None:
     sys.exit(1)
 
 
+def _usage_err(msg: str) -> None:
+    click.echo(f"Error: {msg}", err=True)
+    sys.exit(2)
+
+
 def _default_collection() -> str:
     return os.getenv("BLUE_WEB_COLLECTION", "web")
 
@@ -313,7 +318,7 @@ def extract(
     Requires OPENAI_API_KEY.
     """
     if not schema_str and not schema_file:
-        _err("Provide --schema JSON or --schema-file FILE")
+        _usage_err("Provide --schema JSON or --schema-file FILE")
 
     try:
         if schema_file:
@@ -322,7 +327,7 @@ def extract(
         else:
             schema = json.loads(schema_str)
     except Exception as exc:
-        _err(f"Invalid schema: {exc}")
+        _usage_err(f"Invalid schema: {exc}")
 
     try:
         source = get_source()
