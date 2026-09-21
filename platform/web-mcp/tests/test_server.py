@@ -84,8 +84,8 @@ def test_ensure_index_returns_ok():
     source.execute_query.return_value = None
     with patch.object(_server, "_source", source):
         result = json.loads(_server.ensure_index("news"))
-    assert result["status"] == "ok"
     assert result["collection"] == "news"
+    assert "status" not in result
     source.execute_query.assert_called_once_with({"op": "WEB.ENSURE_INDEX", "collection": "news"})
 
 
