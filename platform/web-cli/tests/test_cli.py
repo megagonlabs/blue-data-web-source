@@ -266,11 +266,17 @@ class TestSearch:
         assert result.exit_code == 0
         assert "No results" in result.output
 
-    def test_k_passed(self, runner, mock_source):
+    def test_limit_passed(self, runner, mock_source):
         mock_source.execute_query.return_value = []
-        runner.invoke(cli, ["search", "query", "-k", "10"])
+        runner.invoke(cli, ["search", "query", "--limit", "10"])
         call_args = mock_source.execute_query.call_args[0][0]
         assert call_args["k"] == 10
+
+    def test_limit_short_flag(self, runner, mock_source):
+        mock_source.execute_query.return_value = []
+        runner.invoke(cli, ["search", "query", "-k", "7"])
+        call_args = mock_source.execute_query.call_args[0][0]
+        assert call_args["k"] == 7
 
     def test_section_title_shown(self, runner, mock_source):
         mock_source.execute_query.return_value = [_chunk()]
@@ -400,9 +406,9 @@ class TestSearchWeb:
         assert result.exit_code == 0
         assert "No results" in result.output
 
-    def test_k_passed(self, runner, mock_source):
+    def test_urls_passed(self, runner, mock_source):
         mock_source.execute_query.return_value = []
-        runner.invoke(cli, ["search-web", "query", "-k", "3"])
+        runner.invoke(cli, ["search-web", "query", "--urls", "3"])
         call_args = mock_source.execute_query.call_args[0][0]
         assert call_args["k"] == 3
 

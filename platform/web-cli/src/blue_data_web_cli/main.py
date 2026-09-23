@@ -372,10 +372,10 @@ def _print_results(results: list[dict], query: str) -> None:
 
 @cli.command()
 @click.argument("query")
-@click.option("-k", default=5, show_default=True, metavar="N", help="Number of results.")
+@click.option("--limit", "-k", default=5, show_default=True, metavar="N", help="Maximum number of chunks to return.")
 @click.option("--collection", default=None, help="Collection name (overrides BLUE_WEB_COLLECTION).")
 @click.pass_context
-def search(ctx: click.Context, query: str, k: int, collection: Optional[str]) -> None:
+def search(ctx: click.Context, query: str, limit: int, collection: Optional[str]) -> None:
     """Search ingested pages by semantic similarity.
 
     Embeds the query and returns the k most relevant chunks from the vector
@@ -384,7 +384,7 @@ def search(ctx: click.Context, query: str, k: int, collection: Optional[str]) ->
     coll = collection or _default_collection()
     try:
         source = get_source()
-        results = source.execute_query({"op": "WEB.SEARCH", "query": query, "k": k, "collection": coll})
+        results = source.execute_query({"op": "WEB.SEARCH", "query": query, "k": limit, "collection": coll})
     except Exception as exc:
         _err(str(exc))
 
@@ -398,10 +398,10 @@ def search(ctx: click.Context, query: str, k: int, collection: Optional[str]) ->
 
 @cli.command("search-web")
 @click.argument("query")
-@click.option("-k", default=5, show_default=True, metavar="N", help="Number of URLs to fetch from the search API.")
+@click.option("--urls", default=5, show_default=True, metavar="N", help="Number of URLs to fetch from the live search API.")
 @click.option("--collection", default=None, help="Collection name (overrides BLUE_WEB_COLLECTION).")
 @click.pass_context
-def search_web(ctx: click.Context, query: str, k: int, collection: Optional[str]) -> None:
+def search_web(ctx: click.Context, query: str, urls: int, collection: Optional[str]) -> None:
     """Search the live web, ingest the top results, and return ranked chunks.
 
     Calls Tavily to find the k most relevant URLs, fetches and ingests each
@@ -413,7 +413,7 @@ def search_web(ctx: click.Context, query: str, k: int, collection: Optional[str]
     coll = collection or _default_collection()
     try:
         source = get_source()
-        results = source.execute_query({"op": "WEB.SEARCH_WEB", "query": query, "k": k, "collection": coll})
+        results = source.execute_query({"op": "WEB.SEARCH_WEB", "query": query, "k": urls, "collection": coll})
     except Exception as exc:
         _err(str(exc))
 

@@ -443,7 +443,7 @@ Ingest articles from an RSS or Atom feed. `--since` filters by publication date.
 ### `search`
 
 ```
-blue-web search QUERY [-k N] [--collection COLLECTION]
+blue-web search QUERY [--limit N] [-k N] [--collection COLLECTION]
 ```
 
 Prints numbered results with domain, title, text preview, and URL.
@@ -451,7 +451,7 @@ Prints numbered results with domain, title, text preview, and URL.
 ### `search-web`
 
 ```
-blue-web search-web QUERY [-k N] [--collection COLLECTION]
+blue-web search-web QUERY [--urls N] [--collection COLLECTION]
 ```
 
 Live Tavily search → ingest → rank. Requires `TAVILY_API_KEY`.
