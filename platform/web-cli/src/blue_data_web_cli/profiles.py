@@ -1,8 +1,7 @@
 """Profile management — named configuration presets for blue-web.
 
-Profiles are stored in ~/.config/blue-web/profiles.json (or
-$XDG_CONFIG_HOME/blue-web/profiles.json).  Each profile is a dict of
-setting keys mapped to values.  Secret keys (API keys) are intentionally
+Profiles are stored in ~/.blue-web/profiles.json.  Each profile is a dict
+of setting keys mapped to values.  Secret keys (API keys) are intentionally
 excluded — keep those in environment variables or a secrets manager.
 
 Precedence (highest to lowest):
@@ -18,9 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 # Overridden in tests via monkeypatch
-_PROFILES_FILE: Path = (
-    Path(os.getenv("XDG_CONFIG_HOME", Path.home() / ".config")) / "blue-web" / "profiles.json"
-)
+_PROFILES_FILE: Path = Path.home() / ".blue-web" / "profiles.json"
 
 # Internal key that stores the name of the default profile
 _DEFAULT_KEY = "_default"
@@ -97,13 +94,13 @@ def set_default(name: str) -> None:
 
 
 def default_profile_name() -> Optional[str]:
-    """Return the stored default profile name (ignores BLUE_WEB_PROFILE env var)."""
+    """Return the stored default profile name (ignores BLUE_DATA_PROFILE env var)."""
     return _load().get(_DEFAULT_KEY)
 
 
 def active_profile_name() -> Optional[str]:
-    """BLUE_WEB_PROFILE env var > stored default > None."""
-    return os.getenv("BLUE_WEB_PROFILE") or default_profile_name()
+    """BLUE_DATA_PROFILE env var > stored default > None."""
+    return os.getenv("BLUE_DATA_PROFILE") or default_profile_name()
 
 
 # ── Env injection ─────────────────────────────────────────────────────────────

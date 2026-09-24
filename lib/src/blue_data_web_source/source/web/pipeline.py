@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -20,6 +21,8 @@ from .fetcher import FetchResult, WebFetcher
 from .freshness import FreshnessStore
 from .metadata import MetadataExtractor
 from .record import WebChunkRecord
+
+_log = logging.getLogger(__name__)
 
 
 class WebPipeline:
@@ -90,9 +93,11 @@ class WebPipeline:
         """
         effective_collection = collection or self._collection
 
+        _log.info("ingesting %s", url)
         fetch_result = _fetch_result if _fetch_result is not None else self._fetcher.fetch(url)
         extract_result = self._extractor.extract(fetch_result.html, fetch_result.final_url)
         if extract_result is None or not extract_result.text.strip():
+            _log.info("no content: %s", url)
             return []
 
         meta = self._metadata_extractor.extract(fetch_result.html)
@@ -104,6 +109,7 @@ class WebPipeline:
         if self._freshness_store is not None:
             stored = self._freshness_store.get(page_id)
             if stored and stored.get("content_hash") == content_hash:
+                _log.info("unchanged: %s", url)
                 self._freshness_store.set(page_id, {
                     **stored,
                     "last_checked_at": datetime.now(timezone.utc).isoformat(),
@@ -113,6 +119,7 @@ class WebPipeline:
             # Cross-URL dedup: skip if identical text already ingested from a different URL
             existing = self._freshness_store.get_by_content_hash(content_hash)
             if existing and existing.get("url") != fetch_result.final_url:
+                _log.debug("duplicate content: %s (matches %s)", url, existing.get("url"))
                 return []
 
         # Classification and field extraction — once per page
@@ -201,6 +208,7 @@ class WebPipeline:
                 "last_checked_at": now,
             })
 
+        _log.info("ingested %s: %d chunk%s", url, len(records), "s" if len(records) != 1 else "")
         return records
 
     def ingest_many(

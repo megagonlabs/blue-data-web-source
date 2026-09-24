@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -416,3 +418,106 @@ class TestSearchWeb:
         mock_source.execute_query.side_effect = RuntimeError("TAVILY_API_KEY not set")
         result = runner.invoke(cli, ["search-web", "query"])
         assert result.exit_code == 1
+
+
+# ── --log / --log-limit ───────────────────────────────────────────────────────
+
+class TestLog:
+    """--log routes diagnostics to stderr; JSON stdout stays clean."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_loggers(self):
+        """Remove any handlers added to the web-source logger between tests."""
+        logger = logging.getLogger("blue_data_web_source")
+        yield
+        logger.handlers.clear()
+        logger.setLevel(logging.WARNING)
+
+    # --log is accepted on every network command
+    def test_ingest_accepts_log(self, runner, mock_source):
+        mock_source.execute_query.return_value = [_chunk()]
+        result = runner.invoke(cli, ["ingest", "--log", "https://example.com/a"])
+        assert result.exit_code == 0
+
+    def test_crawl_accepts_log(self, runner, mock_source):
+        mock_source.execute_query.return_value = [_chunk()]
+        result = runner.invoke(cli, ["crawl", "--log", "https://example.com/"])
+        assert result.exit_code == 0
+
+    def test_feed_accepts_log(self, runner, mock_source):
+        mock_source.execute_query.return_value = [_chunk()]
+        result = runner.invoke(cli, ["feed", "--log", "https://example.com/rss.xml"])
+        assert result.exit_code == 0
+
+    def test_search_web_accepts_log(self, runner, mock_source):
+        mock_source.execute_query.return_value = [_chunk()]
+        result = runner.invoke(cli, ["search-web", "--log", "climate policy"])
+        assert result.exit_code == 0
+
+    def test_extract_accepts_log(self, runner, mock_source):
+        mock_source.execute_query.return_value = {"title": "x"}
+        result = runner.invoke(cli, [
+            "extract", "--log",
+            "--schema", '{"properties": {"title": {"type": "string"}}}',
+            "https://example.com/",
+        ])
+        assert result.exit_code == 0
+
+    # -l is the short alias
+    def test_short_flag(self, runner, mock_source):
+        mock_source.execute_query.return_value = [_chunk()]
+        result = runner.invoke(cli, ["ingest", "-l", "https://example.com/a"])
+        assert result.exit_code == 0
+
+    # --log does not corrupt JSON stdout (source is mocked → no log events fire)
+    def test_log_does_not_corrupt_json_stdout(self, runner, mock_source):
+        mock_source.execute_query.return_value = [_chunk(), _chunk(n=1)]
+        result = runner.invoke(cli, ["--json", "ingest", "--log", "https://example.com/a"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["chunk_count"] == 2
+
+    # _configure_logging unit tests
+    def test_configure_logging_adds_stderr_handler(self):
+        from blue_data_web_cli.main import _configure_logging
+        logger = logging.getLogger("blue_data_web_source")
+        assert not logger.handlers
+        _configure_logging(True, 200)
+        assert any(isinstance(h, logging.StreamHandler) for h in logger.handlers)
+
+    def test_configure_logging_noop_when_false(self):
+        from blue_data_web_cli.main import _configure_logging
+        logger = logging.getLogger("blue_data_web_source")
+        _configure_logging(False, 200)
+        assert not logger.handlers
+
+    def test_configure_logging_routes_to_stderr(self):
+        from blue_data_web_cli.main import _configure_logging
+        logger = logging.getLogger("blue_data_web_source")
+        _configure_logging(True, 200)
+        handler = logger.handlers[0]
+        assert isinstance(handler, logging.StreamHandler)
+        assert handler.stream is sys.stderr
+
+    def test_log_limit_truncates(self):
+        from blue_data_web_cli.main import _TruncatingFormatter
+        record = logging.LogRecord(
+            name="blue_data_web_source.pipeline",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="ingesting " + "x" * 300,
+            args=(),
+            exc_info=None,
+        )
+        formatter = _TruncatingFormatter(50)
+        line = formatter.format(record)
+        assert len(line) == 51  # 50 chars + "…"
+        assert line.endswith("…")
+
+    def test_log_limit_option(self, runner, mock_source):
+        mock_source.execute_query.return_value = [_chunk()]
+        result = runner.invoke(cli, [
+            "ingest", "--log", "--log-limit", "100", "https://example.com/a",
+        ])
+        assert result.exit_code == 0

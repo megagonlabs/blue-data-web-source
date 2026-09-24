@@ -154,6 +154,88 @@ Requires `OPENAI_API_KEY`.
 
 ---
 
+## Profiles
+
+Profiles let you store named sets of configuration so you can switch between environments without re-exporting variables.  Configuration is stored in `~/.blue-web/profiles.json`.
+
+Secret values (API keys) are never written to a profile — keep those in environment variables.
+
+**Precedence:** shell env var > active profile > built-in default.
+
+### `config profile add NAME [options]`
+
+Create a new profile.  Fails if a profile with that name already exists.
+
+```bash
+blue-web config profile add prod \
+    --redis-host redis.prod.internal \
+    --collection prod-web \
+    --embedding openai
+
+blue-web config profile add dev \
+    --redis-host localhost \
+    --collection dev-web
+```
+
+### `config profile config NAME [options]`
+
+Update settings in an existing profile.  Merges the supplied options; omitted options are unchanged.
+
+```bash
+blue-web config profile config prod --redis-host redis2.prod.internal
+```
+
+### `config profile remove NAME`
+
+Delete a profile.
+
+### `config profile list`
+
+List all profiles, showing which is the default.
+
+### `config profile inspect [NAME]`
+
+Show all settings stored in a profile.  Defaults to the active profile when NAME is omitted.
+
+```bash
+blue-web config profile inspect prod
+blue-web --json config profile inspect prod
+```
+
+### `config profile select NAME`
+
+Set the default profile, used when `--profile` is not specified.
+
+```bash
+blue-web config profile select prod
+```
+
+### `--profile NAME` global flag
+
+Override the active profile for a single command.  Also readable from `BLUE_DATA_PROFILE`.
+
+```bash
+blue-web --profile dev ingest https://example.com/article
+BLUE_DATA_PROFILE=prod blue-web search "climate policy"
+```
+
+### Profile settings
+
+| Setting | Env var |
+|---------|---------|
+| `--redis-host` | `BLUE_WEB_REDIS_HOST` |
+| `--redis-port` | `BLUE_WEB_REDIS_PORT` |
+| `--collection` | `BLUE_WEB_COLLECTION` |
+| `--embedding` | `BLUE_WEB_EMBEDDING` |
+| `--chunk-size` | `BLUE_WEB_CHUNK_SIZE` |
+| `--overlap` | `BLUE_WEB_OVERLAP` |
+| `--timeout` | `BLUE_WEB_TIMEOUT` |
+| `--enricher` | `BLUE_WEB_ENRICHER` |
+| `--llm-model` | `BLUE_WEB_LLM_MODEL` |
+| `--embedding-model` | `OPENAI_EMBEDDING_MODEL` |
+
+---
+
 ## Environment variables
 
 | Variable | Default | Description |

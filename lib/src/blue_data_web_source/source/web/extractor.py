@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
+
+_log = logging.getLogger(__name__)
 
 try:
     import trafilatura
@@ -48,11 +51,15 @@ class WebExtractor:
             output_format="txt",
         )
         if not text:
+            _log.debug("no extractable content from %s", url)
             return None
 
         text = _strip_nav_fragments(text)
         if not text:
+            _log.debug("no content after nav-fragment stripping: %s", url)
             return None
+
+        _log.debug("extracted %d chars from %s", len(text), url)
 
         metadata = trafilatura.extract_metadata(html, default_url=url)
 

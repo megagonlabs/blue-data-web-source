@@ -28,6 +28,7 @@ Configure via environment variables:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from typing import Optional
@@ -52,6 +53,45 @@ def _trunc(text: str, n: int = 200) -> str:
     return text if len(text) <= n else text[:n] + "…"
 
 
+# ── Logging ───────────────────────────────────────────────────────────────────
+
+_LOG_LIMIT_DEFAULT = 200
+
+
+class _TruncatingFormatter(logging.Formatter):
+    def __init__(self, limit: int) -> None:
+        super().__init__("%(levelname)s %(name)s: %(message)s")
+        self._limit = limit
+
+    def format(self, record: logging.LogRecord) -> str:
+        s = super().format(record)
+        return s if len(s) <= self._limit else s[:self._limit] + "…"
+
+
+def _configure_logging(log: bool, log_limit: int) -> None:
+    """Enable DEBUG-level logging for blue_data_web_source to stderr."""
+    if not log:
+        return
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(_TruncatingFormatter(log_limit))
+    logger = logging.getLogger("blue_data_web_source")
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(handler)
+
+
+def _log_options(fn):
+    """Decorator that adds --log and --log-limit options to a command."""
+    fn = click.option(
+        "--log-limit", "log_limit", default=_LOG_LIMIT_DEFAULT, show_default=True, metavar="N",
+        help="Truncate each log line to N characters.",
+    )(fn)
+    fn = click.option(
+        "--log", "-l", "log", is_flag=True, default=False,
+        help="Log per-step diagnostic info to stderr.",
+    )(fn)
+    return fn
+
+
 def _err(msg: str) -> None:
     click.echo(f"Error: {msg}", err=True)
     sys.exit(1)
@@ -70,7 +110,7 @@ def _default_collection() -> str:
 
 @click.group()
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output raw JSON.")
-@click.option("--profile", default=None, envvar="BLUE_WEB_PROFILE", metavar="NAME",
+@click.option("--profile", default=None, envvar="BLUE_DATA_PROFILE", metavar="NAME",
               help="Named configuration profile to use.")
 @click.pass_context
 def cli(ctx: click.Context, as_json: bool, profile: Optional[str]) -> None:
@@ -110,8 +150,9 @@ def ensure_index(ctx: click.Context, collection: Optional[str]) -> None:
 @cli.command()
 @click.argument("urls", nargs=-1, required=True, metavar="URL [URL]...")
 @click.option("--collection", default=None, help="Collection name (overrides BLUE_WEB_COLLECTION).")
+@_log_options
 @click.pass_context
-def ingest(ctx: click.Context, urls: tuple[str, ...], collection: Optional[str]) -> None:
+def ingest(ctx: click.Context, urls: tuple[str, ...], collection: Optional[str], log: bool, log_limit: int) -> None:
     """Fetch and ingest one or more web pages.
 
     Extracts main content, strips boilerplate, chunks, enriches, and upserts to
@@ -120,6 +161,7 @@ def ingest(ctx: click.Context, urls: tuple[str, ...], collection: Optional[str])
 
     Pages that fail to extract are reported and skipped; the rest continue.
     """
+    _configure_logging(log, log_limit)
     coll = collection or _default_collection()
     try:
         source = get_source()
@@ -197,6 +239,7 @@ def ingest(ctx: click.Context, urls: tuple[str, ...], collection: Optional[str])
 @click.option("--allow-external", "allow_external", is_flag=True, default=False,
               help="Follow links outside the seed domain.")
 @click.option("--collection", default=None, help="Collection name (overrides BLUE_WEB_COLLECTION).")
+@_log_options
 @click.pass_context
 def crawl(
     ctx: click.Context,
@@ -205,6 +248,8 @@ def crawl(
     max_pages: int,
     allow_external: bool,
     collection: Optional[str],
+    log: bool,
+    log_limit: int,
 ) -> None:
     """BFS-crawl a site from a seed URL and ingest all reachable pages.
 
@@ -212,6 +257,7 @@ def crawl(
     regardless of depth. By default stays within the seed domain.
     Pages that fail to fetch or extract are skipped silently.
     """
+    _configure_logging(log, log_limit)
     coll = collection or _default_collection()
     try:
         source = get_source()
@@ -253,6 +299,7 @@ def crawl(
 @click.option("--max-entries", "max_entries", metavar="N", default=None, type=int,
               help="Max entries to process after date filtering.")
 @click.option("--collection", default=None, help="Collection name (overrides BLUE_WEB_COLLECTION).")
+@_log_options
 @click.pass_context
 def feed(
     ctx: click.Context,
@@ -260,6 +307,8 @@ def feed(
     since: Optional[str],
     max_entries: Optional[int],
     collection: Optional[str],
+    log: bool,
+    log_limit: int,
 ) -> None:
     """Ingest articles from an RSS or Atom feed.
 
@@ -269,6 +318,7 @@ def feed(
 
     Requires: pip install 'blue-data-web-source[feed]'
     """
+    _configure_logging(log, log_limit)
     coll = collection or _default_collection()
     request: dict = {"op": "WEB.INGEST_FEED", "url": url, "collection": coll}
     if since:
@@ -310,12 +360,15 @@ def feed(
 @click.option("--schema-file", "schema_file", default=None,
               type=click.Path(exists=True), metavar="FILE",
               help="Path to a JSON Schema file.")
+@_log_options
 @click.pass_context
 def extract(
     ctx: click.Context,
     url: str,
     schema_str: Optional[str],
     schema_file: Optional[str],
+    log: bool,
+    log_limit: int,
 ) -> None:
     """Extract structured fields from a web page via a JSON Schema.
 
@@ -332,6 +385,7 @@ def extract(
 
     Requires OPENAI_API_KEY.
     """
+    _configure_logging(log, log_limit)
     if not schema_str and not schema_file:
         _usage_err("Provide --schema JSON or --schema-file FILE")
 
@@ -415,8 +469,9 @@ def search(ctx: click.Context, query: str, limit: int, collection: Optional[str]
 @click.argument("query")
 @click.option("--urls", default=5, show_default=True, metavar="N", help="Number of URLs to fetch from the live search API.")
 @click.option("--collection", default=None, help="Collection name (overrides BLUE_WEB_COLLECTION).")
+@_log_options
 @click.pass_context
-def search_web(ctx: click.Context, query: str, urls: int, collection: Optional[str]) -> None:
+def search_web(ctx: click.Context, query: str, urls: int, collection: Optional[str], log: bool, log_limit: int) -> None:
     """Search the live web, ingest the top results, and return ranked chunks.
 
     Calls Tavily to find the k most relevant URLs, fetches and ingests each
@@ -425,6 +480,7 @@ def search_web(ctx: click.Context, query: str, urls: int, collection: Optional[s
 
     Requires TAVILY_API_KEY and BLUE_WEB_REDIS_HOST.
     """
+    _configure_logging(log, log_limit)
     coll = collection or _default_collection()
     try:
         source = get_source()
@@ -452,6 +508,8 @@ def profile() -> None:
     Profiles store non-secret settings so you can switch between environments
     (e.g. dev, staging, prod) without re-exporting variables.  API keys must
     stay in environment variables — they are never written to a profile.
+
+    Configuration is stored in ~/.blue-web/profiles.json.
 
     Precedence: shell env var > active profile > built-in default.
     """
@@ -496,10 +554,10 @@ def profile_add(
     llm_model: Optional[str],
     embedding_model: Optional[str],
 ) -> None:
-    """Add or update a named profile.
+    """Create a new named profile.
 
-    Merges the supplied settings into any existing profile of that name.
-    Omitted options are left unchanged.
+    Fails if a profile with that name already exists — use
+    'blue-web config profile config NAME' to update an existing one.
 
     \b
     Example:
@@ -508,6 +566,9 @@ def profile_add(
             --collection prod-web \\
             --embedding openai
     """
+    if get_profile(name) is not None:
+        _err(f"Profile '{name}' already exists. Use 'config profile config {name}' to update it.")
+
     settings: dict = {}
     if redis_host      is not None: settings["redis_host"]      = redis_host
     if redis_port      is not None: settings["redis_port"]      = redis_port
@@ -527,7 +588,7 @@ def profile_add(
     if ctx.obj["as_json"]:
         click.echo(json.dumps({"profile": name, "settings": get_profile(name)}))
     else:
-        click.echo(f"Profile '{name}' saved.")
+        click.echo(f"Profile '{name}' created.")
 
 
 @profile.command("remove")
@@ -541,6 +602,79 @@ def profile_remove(ctx: click.Context, name: str) -> None:
         click.echo(json.dumps({"removed": name}))
     else:
         click.echo(f"Profile '{name}' removed.")
+
+
+@profile.command("config")
+@click.argument("name")
+@click.option("--redis-host",      "redis_host",      default=None, metavar="HOST",
+              help="Redis host (BLUE_WEB_REDIS_HOST).")
+@click.option("--redis-port",      "redis_port",      default=None, metavar="PORT", type=int,
+              help="Redis port (BLUE_WEB_REDIS_PORT).")
+@click.option("--collection",                         default=None, metavar="NAME",
+              help="Default collection name (BLUE_WEB_COLLECTION).")
+@click.option("--embedding",                          default=None,
+              type=click.Choice(["openai", "dummy"]),
+              help="Embedding backend (BLUE_WEB_EMBEDDING).")
+@click.option("--chunk-size",      "chunk_size",      default=None, metavar="N", type=int,
+              help="Chunk word-count target (BLUE_WEB_CHUNK_SIZE).")
+@click.option("--overlap",                            default=None, metavar="N", type=int,
+              help="Chunk overlap in words (BLUE_WEB_OVERLAP).")
+@click.option("--timeout",                            default=None, metavar="SECS", type=float,
+              help="HTTP timeout in seconds (BLUE_WEB_TIMEOUT).")
+@click.option("--enricher",                           default=None,
+              type=click.Choice(["none", "basic", "llm"]),
+              help="Enricher backend (BLUE_WEB_ENRICHER).")
+@click.option("--llm-model",       "llm_model",       default=None, metavar="MODEL",
+              help="OpenAI model for llm enricher (BLUE_WEB_LLM_MODEL).")
+@click.option("--embedding-model", "embedding_model", default=None, metavar="MODEL",
+              help="OpenAI embedding model name (OPENAI_EMBEDDING_MODEL).")
+@click.pass_context
+def profile_config(
+    ctx: click.Context,
+    name: str,
+    redis_host: Optional[str],
+    redis_port: Optional[int],
+    collection: Optional[str],
+    embedding: Optional[str],
+    chunk_size: Optional[int],
+    overlap: Optional[int],
+    timeout: Optional[float],
+    enricher: Optional[str],
+    llm_model: Optional[str],
+    embedding_model: Optional[str],
+) -> None:
+    """Update settings in an existing profile.
+
+    Merges the supplied options into the profile; omitted options are unchanged.
+    Use 'blue-web config profile add NAME' to create a new profile first.
+
+    \b
+    Example:
+        blue-web config profile config prod --redis-host redis2.prod.internal
+    """
+    if get_profile(name) is None:
+        _err(f"Profile '{name}' does not exist. Use 'config profile add {name}' to create it.")
+
+    settings: dict = {}
+    if redis_host      is not None: settings["redis_host"]      = redis_host
+    if redis_port      is not None: settings["redis_port"]      = redis_port
+    if collection      is not None: settings["collection"]      = collection
+    if embedding       is not None: settings["embedding"]       = embedding
+    if chunk_size      is not None: settings["chunk_size"]      = chunk_size
+    if overlap         is not None: settings["overlap"]         = overlap
+    if timeout         is not None: settings["timeout"]         = timeout
+    if enricher        is not None: settings["enricher"]        = enricher
+    if llm_model       is not None: settings["llm_model"]       = llm_model
+    if embedding_model is not None: settings["embedding_model"] = embedding_model
+
+    if not settings:
+        _usage_err("Provide at least one setting to update (e.g. --redis-host HOST).")
+
+    upsert_profile(name, settings)
+    if ctx.obj["as_json"]:
+        click.echo(json.dumps({"profile": name, "settings": get_profile(name)}))
+    else:
+        click.echo(f"Profile '{name}' updated.")
 
 
 @profile.command("list")
@@ -568,11 +702,11 @@ def profile_list(ctx: click.Context) -> None:
         click.echo(f"  {n}{marker}")
 
 
-@profile.command("show")
+@profile.command("inspect")
 @click.argument("name", required=False, default=None)
 @click.pass_context
-def profile_show(ctx: click.Context, name: Optional[str]) -> None:
-    """Show settings stored in a profile.
+def profile_inspect(ctx: click.Context, name: Optional[str]) -> None:
+    """Show all settings stored in a profile.
 
     NAME defaults to the currently active profile when omitted.
     """

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import httpx
 
 
 _DEFAULT_USER_AGENT = "blue-data-web-source/0.1 (compatible; httpx)"
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -26,13 +28,22 @@ class WebFetcher:
         }
 
     def fetch(self, url: str) -> FetchResult:
+        _log.debug("fetching %s", url)
         with httpx.Client(timeout=self._timeout, follow_redirects=True) as client:
             response = client.get(url, headers=self._headers)
             response.raise_for_status()
-            return FetchResult(
+            result = FetchResult(
                 url=url,
                 final_url=str(response.url),
                 html=response.text,
                 status_code=response.status_code,
                 content_type=response.headers.get("content-type", ""),
             )
+            _log.debug(
+                "fetched %s  [%d %s, %d chars]",
+                result.final_url,
+                result.status_code,
+                result.content_type.split(";")[0],
+                len(result.html),
+            )
+            return result
