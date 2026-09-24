@@ -35,6 +35,17 @@ from typing import Optional
 import click
 
 from blue_data_web_cli.config import get_source
+from blue_data_web_cli.profiles import (
+    apply_profile,
+    active_profile_name,
+    list_profiles,
+    get_profile,
+    upsert_profile,
+    remove_profile,
+    set_default,
+    default_profile_name,
+    ENV_MAP,
+)
 
 
 def _trunc(text: str, n: int = 200) -> str:
@@ -59,11 +70,15 @@ def _default_collection() -> str:
 
 @click.group()
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output raw JSON.")
+@click.option("--profile", default=None, envvar="BLUE_WEB_PROFILE", metavar="NAME",
+              help="Named configuration profile to use.")
 @click.pass_context
-def cli(ctx: click.Context, as_json: bool) -> None:
+def cli(ctx: click.Context, as_json: bool, profile: Optional[str]) -> None:
     """blue-web — fetch, extract, chunk, and search web content."""
     ctx.ensure_object(dict)
     ctx.obj["as_json"] = as_json
+    ctx.obj["profile"] = profile
+    apply_profile(profile or active_profile_name())
 
 
 # ── ensure-index ──────────────────────────────────────────────────────────────
@@ -421,6 +436,179 @@ def search_web(ctx: click.Context, query: str, urls: int, collection: Optional[s
         click.echo(json.dumps({"results": results, "count": len(results)}, indent=2, default=str))
         return
     _print_results(results, query)
+
+
+# ── config ────────────────────────────────────────────────────────────────────
+
+@cli.group()
+def config() -> None:
+    """Manage CLI configuration and profiles."""
+
+
+@config.group()
+def profile() -> None:
+    """Manage named configuration profiles.
+
+    Profiles store non-secret settings so you can switch between environments
+    (e.g. dev, staging, prod) without re-exporting variables.  API keys must
+    stay in environment variables — they are never written to a profile.
+
+    Precedence: shell env var > active profile > built-in default.
+    """
+
+
+@profile.command("add")
+@click.argument("name")
+@click.option("--redis-host",      "redis_host",      default=None, metavar="HOST",
+              help="Redis host (BLUE_WEB_REDIS_HOST).")
+@click.option("--redis-port",      "redis_port",      default=None, metavar="PORT", type=int,
+              help="Redis port (BLUE_WEB_REDIS_PORT).")
+@click.option("--collection",                         default=None, metavar="NAME",
+              help="Default collection name (BLUE_WEB_COLLECTION).")
+@click.option("--embedding",                          default=None,
+              type=click.Choice(["openai", "dummy"]),
+              help="Embedding backend (BLUE_WEB_EMBEDDING).")
+@click.option("--chunk-size",      "chunk_size",      default=None, metavar="N", type=int,
+              help="Chunk word-count target (BLUE_WEB_CHUNK_SIZE).")
+@click.option("--overlap",                            default=None, metavar="N", type=int,
+              help="Chunk overlap in words (BLUE_WEB_OVERLAP).")
+@click.option("--timeout",                            default=None, metavar="SECS", type=float,
+              help="HTTP timeout in seconds (BLUE_WEB_TIMEOUT).")
+@click.option("--enricher",                           default=None,
+              type=click.Choice(["none", "basic", "llm"]),
+              help="Enricher backend (BLUE_WEB_ENRICHER).")
+@click.option("--llm-model",       "llm_model",       default=None, metavar="MODEL",
+              help="OpenAI model for llm enricher (BLUE_WEB_LLM_MODEL).")
+@click.option("--embedding-model", "embedding_model", default=None, metavar="MODEL",
+              help="OpenAI embedding model name (OPENAI_EMBEDDING_MODEL).")
+@click.pass_context
+def profile_add(
+    ctx: click.Context,
+    name: str,
+    redis_host: Optional[str],
+    redis_port: Optional[int],
+    collection: Optional[str],
+    embedding: Optional[str],
+    chunk_size: Optional[int],
+    overlap: Optional[int],
+    timeout: Optional[float],
+    enricher: Optional[str],
+    llm_model: Optional[str],
+    embedding_model: Optional[str],
+) -> None:
+    """Add or update a named profile.
+
+    Merges the supplied settings into any existing profile of that name.
+    Omitted options are left unchanged.
+
+    \b
+    Example:
+        blue-web config profile add prod \\
+            --redis-host redis.prod.internal \\
+            --collection prod-web \\
+            --embedding openai
+    """
+    settings: dict = {}
+    if redis_host      is not None: settings["redis_host"]      = redis_host
+    if redis_port      is not None: settings["redis_port"]      = redis_port
+    if collection      is not None: settings["collection"]      = collection
+    if embedding       is not None: settings["embedding"]       = embedding
+    if chunk_size      is not None: settings["chunk_size"]      = chunk_size
+    if overlap         is not None: settings["overlap"]         = overlap
+    if timeout         is not None: settings["timeout"]         = timeout
+    if enricher        is not None: settings["enricher"]        = enricher
+    if llm_model       is not None: settings["llm_model"]       = llm_model
+    if embedding_model is not None: settings["embedding_model"] = embedding_model
+
+    if not settings:
+        _usage_err("Provide at least one setting (e.g. --redis-host HOST --collection NAME).")
+
+    upsert_profile(name, settings)
+    if ctx.obj["as_json"]:
+        click.echo(json.dumps({"profile": name, "settings": get_profile(name)}))
+    else:
+        click.echo(f"Profile '{name}' saved.")
+
+
+@profile.command("remove")
+@click.argument("name")
+@click.pass_context
+def profile_remove(ctx: click.Context, name: str) -> None:
+    """Remove a named profile."""
+    if not remove_profile(name):
+        _err(f"Profile '{name}' does not exist.")
+    if ctx.obj["as_json"]:
+        click.echo(json.dumps({"removed": name}))
+    else:
+        click.echo(f"Profile '{name}' removed.")
+
+
+@profile.command("list")
+@click.pass_context
+def profile_list(ctx: click.Context) -> None:
+    """List all profiles."""
+    names = list_profiles()
+    default = default_profile_name()
+    active = active_profile_name()
+
+    if ctx.obj["as_json"]:
+        click.echo(json.dumps({
+            "profiles": names,
+            "default": default,
+            "active": active,
+        }))
+        return
+
+    if not names:
+        click.echo("No profiles defined.  Use 'blue-web config profile add NAME' to create one.")
+        return
+
+    for n in names:
+        marker = " (default)" if n == default else ""
+        click.echo(f"  {n}{marker}")
+
+
+@profile.command("show")
+@click.argument("name", required=False, default=None)
+@click.pass_context
+def profile_show(ctx: click.Context, name: Optional[str]) -> None:
+    """Show settings stored in a profile.
+
+    NAME defaults to the currently active profile when omitted.
+    """
+    resolved = name or active_profile_name()
+    if not resolved:
+        _usage_err("No profile specified and no active profile is set.")
+
+    data = get_profile(resolved)
+    if data is None:
+        _err(f"Profile '{resolved}' does not exist.")
+
+    if ctx.obj["as_json"]:
+        click.echo(json.dumps({"profile": resolved, "settings": data}))
+        return
+
+    click.echo(f"Profile: {resolved}")
+    if not data:
+        click.echo("  (empty)")
+        return
+    for field, value in sorted(data.items()):
+        env_var = ENV_MAP.get(field, field)
+        click.echo(f"  {field}: {value}  ({env_var})")
+
+
+@profile.command("select")
+@click.argument("name")
+@click.pass_context
+def profile_select(ctx: click.Context, name: str) -> None:
+    """Set the default profile used when --profile is not specified."""
+    if get_profile(name) is None:
+        _err(f"Profile '{name}' does not exist.")
+    set_default(name)
+    if ctx.obj["as_json"]:
+        click.echo(json.dumps({"default": name}))
+    else:
+        click.echo(f"Default profile set to '{name}'.")
 
 
 if __name__ == "__main__":
