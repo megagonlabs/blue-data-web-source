@@ -16,7 +16,7 @@ Most web ingestion tools solve one problem at a time: fetch a URL, parse a feed,
 
 A news monitoring agent ingests 500 pages per scheduled run. Most days the majority of those pages — evergreen articles, documentation, policy pages — haven't changed since the last run. Without freshness tracking, every run re-fetches and re-embeds all 500. At standard embedding API pricing, a corpus that generates 250K tokens of chunks costs real money per run in unchanged content alone.
 
-`blue-data-web-source` tracks a SHA-256 hash of each page's extracted text. Re-ingesting an unchanged URL returns `[]` in milliseconds — no HTTP re-fetch, no embedding call, no upsert. Only new or changed pages touch the embedding model.
+`blue-data-web-source` tracks a SHA-256 hash of each page's extracted text. Every run fetches the page; if the content hash matches the stored value the pipeline returns `[]` immediately — no chunking, no embedding call, no upsert. Only new or changed pages touch the embedding model.
 
 ```python
 from blue_data_web_source import WebDataSource, FileFreshnessStore
@@ -68,7 +68,7 @@ Entries without a publication date are always included — they pass the `since`
 
 An agent needs current information on a topic. It calls a search API and gets back URLs. Getting from those URLs to ranked, queryable chunks requires wiring: fetch each page with timeout handling, strip boilerplate, chunk the text, embed each chunk, rank by relevance to the original query, and deduplicate against content already in the index. Each of those steps is a separate concern that needs to compose correctly.
 
-`WEB.SEARCH_WEB` does this in one call: search API → fetch and extract each result → chunk and embed → semantic rank → return chunks. Re-running the same query does not re-fetch already-ingested pages — freshness dedup means pages already in the index are skipped, so repeated queries are cheap.
+`WEB.SEARCH_WEB` does this in one call: search API → fetch and extract each result → chunk and embed → semantic rank → return chunks. With a freshness store configured, re-running the same query re-fetches each page but skips re-embedding unchanged content — only new or modified pages touch the embedding model.
 
 ```python
 results = source.execute_query({
