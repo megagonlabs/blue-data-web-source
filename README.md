@@ -405,7 +405,7 @@ Source of truth with full optional-field list: [docs/api-reference.md](docs/api-
 - Queries the configured `WebSearchProvider` (default: `TavilySearchProvider`) for top-`k` URLs
 - Ingests each URL through the full pipeline (fetch → extract → chunk → embed → upsert)
 - Runs semantic search over the freshly ingested content and returns `top_k` ranked chunks
-- URL-hash deduplication means re-running the same query does not re-fetch already-ingested pages
+- With a freshness store configured, re-running the same query re-fetches each page but skips re-embedding unchanged content — upsert semantics prevent duplicate chunks regardless
 - Swap the search backend by passing any `WebSearchProvider` subclass to `WebDataSource`
 
 ---

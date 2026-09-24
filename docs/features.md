@@ -421,7 +421,7 @@ source = WebDataSource(
 # First run — fetches and embeds all pages
 results = source.execute_query({"op": "WEB.INGEST", "url": "https://example.com/article"})
 
-# Second run — page hasn't changed: skip fetch, return []
+# Second run — page hasn't changed: fetches page, hash matches — skips re-embedding, returns []
 results = source.execute_query({"op": "WEB.INGEST", "url": "https://example.com/article"})
 assert results == []  # no re-embedding, no vector store write
 
@@ -431,10 +431,10 @@ results = source.execute_query({
     "url": "https://example.com/feed.xml",
     "since": "2026-08-17T00:00:00Z",
 })
-# Only new or changed articles are fetched and embedded
+# All articles are fetched; only new or changed ones are embedded and indexed
 ```
 
-Freshness check uses a SHA-256 hash of the raw HTTP response body — byte-level change detection, not timestamp-based. The cache file is a plain JSON file, portable and inspectable.
+Freshness check uses a SHA-256 hash of the page's extracted text — content-level change detection, not timestamp-based. The cache file is a plain JSON file, portable and inspectable.
 
 When a `freshness_store` is set, cross-URL content deduplication is also active: if two different URLs yield identical extracted text, the second ingest is skipped automatically — no re-embedding, no duplicate chunks in the vector store.
 
