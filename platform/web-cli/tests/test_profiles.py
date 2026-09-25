@@ -139,7 +139,7 @@ class TestApplyProfile:
 class TestProfileAdd:
     def test_add_creates_profile(self, runner, profiles_file):
         result = runner.invoke(cli, [
-            "config", "profile", "add", "dev",
+            "profile", "add", "dev",
             "--collection", "dev-web",
             "--redis-host", "localhost",
         ])
@@ -150,13 +150,13 @@ class TestProfileAdd:
         assert p["redis_host"] == "localhost"
 
     def test_add_duplicate_exits_1(self, runner, profiles_file):
-        runner.invoke(cli, ["config", "profile", "add", "dev", "--collection", "dev-web"])
-        result = runner.invoke(cli, ["config", "profile", "add", "dev", "--collection", "other"])
+        runner.invoke(cli, ["profile", "add", "dev", "--collection", "dev-web"])
+        result = runner.invoke(cli, ["profile", "add", "dev", "--collection", "other"])
         assert result.exit_code == 1
 
     def test_add_json_output(self, runner, profiles_file):
         result = runner.invoke(cli, [
-            "--json", "config", "profile", "add", "dev",
+            "--format", "json", "profile", "add", "dev",
             "--collection", "dev-web",
         ])
         assert result.exit_code == 0
@@ -165,18 +165,18 @@ class TestProfileAdd:
         assert data["settings"]["collection"] == "dev-web"
 
     def test_add_no_settings_exits_2(self, runner, profiles_file):
-        result = runner.invoke(cli, ["config", "profile", "add", "dev"])
+        result = runner.invoke(cli, ["profile", "add", "dev"])
         assert result.exit_code == 2
 
     def test_add_invalid_embedding_choice(self, runner, profiles_file):
         result = runner.invoke(cli, [
-            "config", "profile", "add", "dev", "--embedding", "invalid",
+            "profile", "add", "dev", "--embedding", "invalid",
         ])
         assert result.exit_code != 0
 
     def test_add_all_options(self, runner, profiles_file):
         result = runner.invoke(cli, [
-            "config", "profile", "add", "full",
+            "profile", "add", "full",
             "--redis-host", "redis.host",
             "--redis-port", "6380",
             "--collection", "my-col",
@@ -200,17 +200,17 @@ class TestProfileAdd:
 class TestProfileRemove:
     def test_remove_existing(self, runner, profiles_file):
         prof_mod.upsert_profile("dev", {"collection": "dev"})
-        result = runner.invoke(cli, ["config", "profile", "remove", "dev"])
+        result = runner.invoke(cli, ["profile", "remove", "dev"])
         assert result.exit_code == 0
         assert prof_mod.get_profile("dev") is None
 
     def test_remove_missing_exits_1(self, runner, profiles_file):
-        result = runner.invoke(cli, ["config", "profile", "remove", "ghost"])
+        result = runner.invoke(cli, ["profile", "remove", "ghost"])
         assert result.exit_code == 1
 
     def test_remove_json_output(self, runner, profiles_file):
         prof_mod.upsert_profile("dev", {"collection": "dev"})
-        result = runner.invoke(cli, ["--json", "config", "profile", "remove", "dev"])
+        result = runner.invoke(cli, ["--format", "json", "profile", "remove", "dev"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["removed"] == "dev"
@@ -220,14 +220,14 @@ class TestProfileRemove:
 
 class TestProfileList:
     def test_empty(self, runner, profiles_file):
-        result = runner.invoke(cli, ["config", "profile", "list"])
+        result = runner.invoke(cli, ["profile", "list"])
         assert result.exit_code == 0
         assert "No profiles" in result.output
 
     def test_lists_names(self, runner, profiles_file):
         prof_mod.upsert_profile("dev", {"collection": "d"})
         prof_mod.upsert_profile("prod", {"collection": "p"})
-        result = runner.invoke(cli, ["config", "profile", "list"])
+        result = runner.invoke(cli, ["profile", "list"])
         assert result.exit_code == 0
         assert "dev" in result.output
         assert "prod" in result.output
@@ -235,14 +235,14 @@ class TestProfileList:
     def test_marks_default(self, runner, profiles_file):
         prof_mod.upsert_profile("prod", {"collection": "p"})
         prof_mod.set_default("prod")
-        result = runner.invoke(cli, ["config", "profile", "list"])
+        result = runner.invoke(cli, ["profile", "list"])
         assert "(default)" in result.output
 
     def test_json_output(self, runner, profiles_file):
         prof_mod.upsert_profile("dev",  {"collection": "d"})
         prof_mod.upsert_profile("prod", {"collection": "p"})
         prof_mod.set_default("prod")
-        result = runner.invoke(cli, ["--json", "config", "profile", "list"])
+        result = runner.invoke(cli, ["--format", "json", "profile", "list"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "dev" in data["profiles"]
@@ -256,7 +256,7 @@ class TestProfileConfig:
     def test_config_updates_existing(self, runner, profiles_file):
         prof_mod.upsert_profile("dev", {"collection": "dev-web"})
         result = runner.invoke(cli, [
-            "config", "profile", "config", "dev", "--redis-host", "localhost",
+            "profile", "config", "dev", "--redis-host", "localhost",
         ])
         assert result.exit_code == 0
         p = prof_mod.get_profile("dev")
@@ -265,19 +265,19 @@ class TestProfileConfig:
 
     def test_config_missing_profile_exits_1(self, runner, profiles_file):
         result = runner.invoke(cli, [
-            "config", "profile", "config", "ghost", "--collection", "x",
+            "profile", "config", "ghost", "--collection", "x",
         ])
         assert result.exit_code == 1
 
     def test_config_no_settings_exits_2(self, runner, profiles_file):
         prof_mod.upsert_profile("dev", {"collection": "dev-web"})
-        result = runner.invoke(cli, ["config", "profile", "config", "dev"])
+        result = runner.invoke(cli, ["profile", "config", "dev"])
         assert result.exit_code == 2
 
     def test_config_json_output(self, runner, profiles_file):
         prof_mod.upsert_profile("dev", {"collection": "dev-web"})
         result = runner.invoke(cli, [
-            "--json", "config", "profile", "config", "dev", "--collection", "updated",
+            "--format", "json", "profile", "config", "dev", "--collection", "updated",
         ])
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -286,7 +286,7 @@ class TestProfileConfig:
 
     def test_config_does_not_create_new(self, runner, profiles_file):
         result = runner.invoke(cli, [
-            "config", "profile", "config", "new-profile", "--collection", "x",
+            "profile", "config", "new-profile", "--collection", "x",
         ])
         assert result.exit_code == 1
         assert prof_mod.get_profile("new-profile") is None
@@ -297,31 +297,31 @@ class TestProfileConfig:
 class TestProfileInspect:
     def test_inspect_by_name(self, runner, profiles_file):
         prof_mod.upsert_profile("dev", {"collection": "dev-web", "redis_host": "localhost"})
-        result = runner.invoke(cli, ["config", "profile", "inspect", "dev"])
+        result = runner.invoke(cli, ["profile", "inspect", "dev"])
         assert result.exit_code == 0
         assert "dev-web" in result.output
         assert "localhost" in result.output
 
     def test_inspect_missing_exits_1(self, runner, profiles_file):
-        result = runner.invoke(cli, ["config", "profile", "inspect", "ghost"])
+        result = runner.invoke(cli, ["profile", "inspect", "ghost"])
         assert result.exit_code == 1
 
     def test_inspect_no_name_no_default_exits_2(self, runner, profiles_file, monkeypatch):
         monkeypatch.delenv("BLUE_DATA_PROFILE", raising=False)
-        result = runner.invoke(cli, ["config", "profile", "inspect"])
+        result = runner.invoke(cli, ["profile", "inspect"])
         assert result.exit_code == 2
 
     def test_inspect_uses_active_when_no_arg(self, runner, profiles_file, monkeypatch):
         monkeypatch.delenv("BLUE_DATA_PROFILE", raising=False)
         prof_mod.upsert_profile("prod", {"collection": "prod-web"})
         prof_mod.set_default("prod")
-        result = runner.invoke(cli, ["config", "profile", "inspect"])
+        result = runner.invoke(cli, ["profile", "inspect"])
         assert result.exit_code == 0
         assert "prod-web" in result.output
 
     def test_inspect_json_output(self, runner, profiles_file):
         prof_mod.upsert_profile("dev", {"collection": "dev-web"})
-        result = runner.invoke(cli, ["--json", "config", "profile", "inspect", "dev"])
+        result = runner.invoke(cli, ["--format", "json", "profile", "inspect", "dev"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["profile"] == "dev"
@@ -333,17 +333,17 @@ class TestProfileInspect:
 class TestProfileSelect:
     def test_select_sets_default(self, runner, profiles_file):
         prof_mod.upsert_profile("prod", {"collection": "prod"})
-        result = runner.invoke(cli, ["config", "profile", "select", "prod"])
+        result = runner.invoke(cli, ["profile", "select", "prod"])
         assert result.exit_code == 0
         assert prof_mod.default_profile_name() == "prod"
 
     def test_select_missing_exits_1(self, runner, profiles_file):
-        result = runner.invoke(cli, ["config", "profile", "select", "ghost"])
+        result = runner.invoke(cli, ["profile", "select", "ghost"])
         assert result.exit_code == 1
 
     def test_select_json_output(self, runner, profiles_file):
         prof_mod.upsert_profile("prod", {"collection": "prod"})
-        result = runner.invoke(cli, ["--json", "config", "profile", "select", "prod"])
+        result = runner.invoke(cli, ["--format", "json", "profile", "select", "prod"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["default"] == "prod"
@@ -369,7 +369,7 @@ class TestProfileFlag:
             return source
 
         with patch("blue_data_web_cli.main.get_source", side_effect=_capturing_get_source):
-            result = runner.invoke(cli, ["--profile", "dev", "ensure-index"])
+            result = runner.invoke(cli, ["--profile", "dev", "index", "ensure"])
 
         assert result.exit_code == 0
         assert captured_env["collection"] == "dev-web"
@@ -388,7 +388,7 @@ class TestProfileFlag:
             return source
 
         with patch("blue_data_web_cli.main.get_source", side_effect=_capturing_get_source):
-            result = runner.invoke(cli, ["--profile", "dev", "ensure-index"])
+            result = runner.invoke(cli, ["--profile", "dev", "index", "ensure"])
 
         assert result.exit_code == 0
         assert captured_env["collection"] == "shell-col"

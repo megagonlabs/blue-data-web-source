@@ -1,16 +1,17 @@
 """blue-web — CLI for blue-data-web-source.
 
 Usage:
-    blue-web [--json] COMMAND [ARGS]...
+    blue-web [--profile NAME] [--format FORMAT] COMMAND [ARGS]...
 
 Commands:
-    ensure-index   Create the vector index for a collection
-    ingest         Ingest one or more web pages
-    crawl          BFS-crawl a site from a seed URL
-    feed           Ingest articles from an RSS or Atom feed
-    search         Semantic search over ingested pages
-    search-web     Search the live web and ingest results
-    extract        Extract structured fields from a web page via JSON Schema
+    page import    Fetch and import one or more web pages
+    page crawl     BFS-crawl a site from a seed URL
+    page search    Semantic search over imported pages
+    page extract   Extract structured fields from a web page via JSON Schema
+    feed import    Import articles from an RSS or Atom feed
+    index ensure   Create the vector index for a collection
+    live search    Search the live web and import results
+    profile        Manage named configuration profiles
 
 Configure via environment variables:
 
@@ -23,7 +24,7 @@ Configure via environment variables:
     BLUE_WEB_CHUNK_SIZE       default: 1000
     BLUE_WEB_OVERLAP          default: 150
     BLUE_WEB_TIMEOUT          HTTP timeout in seconds; default: 30
-    TAVILY_API_KEY            required for search-web
+    TAVILY_API_KEY            required for live search
 """
 from __future__ import annotations
 
@@ -92,332 +93,36 @@ def _log_options(fn):
     return fn
 
 
-def _err(msg: str) -> None:
-    click.echo(f"Error: {msg}", err=True)
+def _err(msg: str, fmt: str = "table") -> None:
+    if fmt in ("json", "nl"):
+        click.echo(json.dumps({"error": msg}), err=True)
+    else:
+        click.echo(f"Error: {msg}", err=True)
     sys.exit(1)
 
 
-def _usage_err(msg: str) -> None:
-    click.echo(f"Error: {msg}", err=True)
+def _usage_err(msg: str, fmt: str = "table") -> None:
+    if fmt in ("json", "nl"):
+        click.echo(json.dumps({"error": msg}), err=True)
+    else:
+        click.echo(f"Error: {msg}", err=True)
     sys.exit(2)
+
+
+def _emit(data: object, fmt: str) -> None:
+    if fmt == "json":
+        click.echo(json.dumps(data, indent=2, default=str))
+    elif fmt == "nl":
+        if isinstance(data, list):
+            for item in data:
+                click.echo(json.dumps(item, default=str))
+        else:
+            click.echo(json.dumps(data, default=str))
 
 
 def _default_collection() -> str:
     return os.getenv("BLUE_WEB_COLLECTION", "web")
 
-
-# ── Root group ────────────────────────────────────────────────────────────────
-
-@click.group()
-@click.option("--json", "as_json", is_flag=True, default=False, help="Output raw JSON.")
-@click.option("--profile", default=None, envvar="BLUE_DATA_PROFILE", metavar="NAME",
-              help="Named configuration profile to use.")
-@click.pass_context
-def cli(ctx: click.Context, as_json: bool, profile: Optional[str]) -> None:
-    """blue-web — fetch, extract, chunk, and search web content."""
-    ctx.ensure_object(dict)
-    ctx.obj["as_json"] = as_json
-    ctx.obj["profile"] = profile
-    apply_profile(profile or active_profile_name())
-
-
-# ── ensure-index ──────────────────────────────────────────────────────────────
-
-@cli.command("ensure-index")
-@click.option("--collection", default=None, help="Collection name (overrides BLUE_WEB_COLLECTION).")
-@click.pass_context
-def ensure_index(ctx: click.Context, collection: Optional[str]) -> None:
-    """Create the vector index for a collection.
-
-    Must be called once before the first ingest when using a vector store.
-    Safe to call multiple times — skips creation if the index already exists.
-    """
-    coll = collection or _default_collection()
-    try:
-        source = get_source()
-        source.execute_query({"op": "WEB.ENSURE_INDEX", "collection": coll})
-    except Exception as exc:
-        _err(str(exc))
-
-    if ctx.obj["as_json"]:
-        click.echo(json.dumps({"collection": coll}))
-    else:
-        click.echo(f"Index ready: {coll}")
-
-
-# ── ingest ────────────────────────────────────────────────────────────────────
-
-@cli.command()
-@click.argument("urls", nargs=-1, required=True, metavar="URL [URL]...")
-@click.option("--collection", default=None, help="Collection name (overrides BLUE_WEB_COLLECTION).")
-@_log_options
-@click.pass_context
-def ingest(ctx: click.Context, urls: tuple[str, ...], collection: Optional[str], log: bool, log_limit: int) -> None:
-    """Fetch and ingest one or more web pages.
-
-    Extracts main content, strips boilerplate, chunks, enriches, and upserts to
-    the configured vector store. Re-ingesting the same URL is safe — URL-hash
-    deduplication means the same final URL always produces the same chunk IDs.
-
-    Pages that fail to extract are reported and skipped; the rest continue.
-    """
-    _configure_logging(log, log_limit)
-    coll = collection or _default_collection()
-    try:
-        source = get_source()
-    except Exception as exc:
-        _err(f"Failed to build source: {exc}")
-
-    per_url: dict[str, list] = {}
-    had_failure = False
-    for url in urls:
-        try:
-            records = source.execute_query({"op": "WEB.INGEST", "url": url, "collection": coll})
-            per_url[url] = records
-            if not records:
-                had_failure = True
-        except Exception as exc:
-            click.echo(f"Error ingesting {url}: {exc}", err=True)
-            per_url[url] = []
-            had_failure = True
-
-    if ctx.obj["as_json"]:
-        output = []
-        for url, records in per_url.items():
-            if records:
-                first = records[0]
-                output.append({
-                    "page_id": first.get("page_id"),
-                    "url": url,
-                    "title": first.get("title"),
-                    "domain": first.get("domain"),
-                    "date": first.get("date"),
-                    "chunk_count": len(records),
-                    "collection": coll,
-                })
-            else:
-                output.append({"url": url, "error": "no content extracted"})
-        click.echo(json.dumps(output[0] if len(output) == 1 else output, indent=2, default=str))
-        if had_failure:
-            sys.exit(1)
-        return
-
-    if len(urls) == 1:
-        url = urls[0]
-        records = per_url[url]
-        if not records:
-            _err(f"No content extracted from {url}")
-        first = records[0]
-        click.echo(f"Ingested {len(records)} chunk{'s' if len(records) != 1 else ''} from {url}")
-        if first.get("title"):
-            click.echo(f"  title:      {first['title']}")
-        click.echo(f"  domain:     {first['domain']}")
-        if first.get("date"):
-            click.echo(f"  date:       {first['date']}")
-        click.echo(f"  collection: {coll}")
-    else:
-        total_chunks = sum(len(r) for r in per_url.values())
-        total_pages = sum(1 for r in per_url.values() if r)
-        click.echo(f"Ingested {total_pages} page{'s' if total_pages != 1 else ''}, {total_chunks} chunks")
-        for url, records in per_url.items():
-            if records:
-                click.echo(f"  ✓ {url}  ({len(records)} chunks)")
-            else:
-                click.echo(f"  ✗ {url}  (no content)")
-        click.echo(f"\n  collection: {coll}")
-
-    if had_failure:
-        sys.exit(1)
-
-
-# ── crawl ─────────────────────────────────────────────────────────────────────
-
-@cli.command()
-@click.argument("url")
-@click.option("--depth", default=1, show_default=True, metavar="N", help="Crawl depth from seed.")
-@click.option("--max-pages", "max_pages", default=10, show_default=True, metavar="N", help="Max pages to ingest.")
-@click.option("--allow-external", "allow_external", is_flag=True, default=False,
-              help="Follow links outside the seed domain.")
-@click.option("--collection", default=None, help="Collection name (overrides BLUE_WEB_COLLECTION).")
-@_log_options
-@click.pass_context
-def crawl(
-    ctx: click.Context,
-    url: str,
-    depth: int,
-    max_pages: int,
-    allow_external: bool,
-    collection: Optional[str],
-    log: bool,
-    log_limit: int,
-) -> None:
-    """BFS-crawl a site from a seed URL and ingest all reachable pages.
-
-    Follows links up to DEPTH hops from the seed. Stops after MAX_PAGES pages
-    regardless of depth. By default stays within the seed domain.
-    Pages that fail to fetch or extract are skipped silently.
-    """
-    _configure_logging(log, log_limit)
-    coll = collection or _default_collection()
-    try:
-        source = get_source()
-        records = source.execute_query({
-            "op": "WEB.CRAWL",
-            "url": url,
-            "depth": depth,
-            "max_pages": max_pages,
-            "same_domain_only": not allow_external,
-            "collection": coll,
-        })
-    except Exception as exc:
-        _err(str(exc))
-
-    ingested_urls = sorted({r["url"] for r in records})
-
-    if ctx.obj["as_json"]:
-        click.echo(json.dumps({
-            "chunk_count": len(records),
-            "pages_ingested": len(ingested_urls),
-            "urls": ingested_urls,
-            "collection": coll,
-        }, indent=2))
-        return
-
-    n = len(ingested_urls)
-    click.echo(f"Crawled {n} page{'s' if n != 1 else ''}, {len(records)} chunks  [seed: {url}]")
-    for u in ingested_urls:
-        click.echo(f"  {u}")
-    click.echo(f"\n  collection: {coll}")
-
-
-# ── feed ──────────────────────────────────────────────────────────────────────
-
-@cli.command()
-@click.argument("url")
-@click.option("--since", metavar="ISO8601", default=None,
-              help="Only ingest entries published at or after this date (e.g. 2026-08-01T00:00:00Z).")
-@click.option("--max-entries", "max_entries", metavar="N", default=None, type=int,
-              help="Max entries to process after date filtering.")
-@click.option("--collection", default=None, help="Collection name (overrides BLUE_WEB_COLLECTION).")
-@_log_options
-@click.pass_context
-def feed(
-    ctx: click.Context,
-    url: str,
-    since: Optional[str],
-    max_entries: Optional[int],
-    collection: Optional[str],
-    log: bool,
-    log_limit: int,
-) -> None:
-    """Ingest articles from an RSS or Atom feed.
-
-    Fetches the feed, parses all entries, and ingests each article URL. Use
-    --since to skip entries older than a cutoff — useful for daily incremental
-    runs. Entries without a publication date are always included.
-
-    Requires: pip install 'blue-data-web-source[feed]'
-    """
-    _configure_logging(log, log_limit)
-    coll = collection or _default_collection()
-    request: dict = {"op": "WEB.INGEST_FEED", "url": url, "collection": coll}
-    if since:
-        request["since"] = since
-    if max_entries is not None:
-        request["max_entries"] = max_entries
-
-    try:
-        source = get_source()
-        records = source.execute_query(request)
-    except Exception as exc:
-        _err(str(exc))
-
-    ingested_urls = sorted({r["url"] for r in records})
-
-    if ctx.obj["as_json"]:
-        click.echo(json.dumps({
-            "chunk_count": len(records),
-            "articles_ingested": len(ingested_urls),
-            "urls": ingested_urls,
-            "collection": coll,
-        }, indent=2))
-        return
-
-    n = len(ingested_urls)
-    click.echo(f"Feed: {url}")
-    click.echo(f"  {n} article{'s' if n != 1 else ''} ingested, {len(records)} chunks")
-    for u in ingested_urls:
-        click.echo(f"  {u}")
-    click.echo(f"\n  collection: {coll}")
-
-
-# ── extract ───────────────────────────────────────────────────────────────────
-
-@cli.command()
-@click.argument("url")
-@click.option("--schema", "schema_str", default=None, metavar="JSON",
-              help="JSON Schema as a JSON string.")
-@click.option("--schema-file", "schema_file", default=None,
-              type=click.Path(exists=True), metavar="FILE",
-              help="Path to a JSON Schema file.")
-@_log_options
-@click.pass_context
-def extract(
-    ctx: click.Context,
-    url: str,
-    schema_str: Optional[str],
-    schema_file: Optional[str],
-    log: bool,
-    log_limit: int,
-) -> None:
-    """Extract structured fields from a web page via a JSON Schema.
-
-    Fetches the URL, extracts main body text, and calls an LLM to fill in the
-    fields described by the schema. Pass the schema inline as a JSON string or
-    via a file.
-
-    Examples:
-
-    \b
-        blue-web extract https://example.com/product \\
-            --schema '{"properties": {"title": {"type": "string"}, "price": {"type": "number"}}}'
-        blue-web extract https://example.com/product --schema-file product_schema.json
-
-    Requires OPENAI_API_KEY.
-    """
-    _configure_logging(log, log_limit)
-    if not schema_str and not schema_file:
-        _usage_err("Provide --schema JSON or --schema-file FILE")
-
-    try:
-        if schema_file:
-            with open(schema_file) as fh:
-                schema = json.load(fh)
-        else:
-            schema = json.loads(schema_str)
-    except Exception as exc:
-        _usage_err(f"Invalid schema: {exc}")
-
-    try:
-        source = get_source()
-        result = source.execute_query({"op": "WEB.EXTRACT", "url": url, "schema": schema})
-    except Exception as exc:
-        _err(str(exc))
-
-    if ctx.obj["as_json"]:
-        click.echo(json.dumps(result, indent=2, default=str))
-        return
-
-    if not result:
-        click.echo("No fields extracted (page may have no extractable content).")
-        return
-
-    click.echo(f"Extracted from {url}\n")
-    for key, val in result.items():
-        click.echo(f"  {key}: {val}")
-
-
-# ── Shared result printer ─────────────────────────────────────────────────────
 
 def _print_results(results: list[dict], query: str) -> None:
     if not results:
@@ -437,76 +142,413 @@ def _print_results(results: list[dict], query: str) -> None:
         click.echo()
 
 
-# ── search ────────────────────────────────────────────────────────────────────
+# ── Root group ────────────────────────────────────────────────────────────────
 
-@cli.command()
+@click.group()
+@click.version_option(package_name="blue-data-web-cli")
+@click.option("--format", "fmt",
+              type=click.Choice(["table", "json", "nl"], case_sensitive=False),
+              default=None, envvar="BLUE_DATA_CLI_FORMAT",
+              help="Output format: table (default), json, or nl (newline-delimited JSON).")
+@click.option("--profile", default=None, envvar="BLUE_DATA_PROFILE", metavar="NAME",
+              help="Named configuration profile to use.")
+@click.pass_context
+def cli(ctx: click.Context, fmt: Optional[str], profile: Optional[str]) -> None:
+    """blue-web — fetch, extract, chunk, and search web content."""
+    ctx.ensure_object(dict)
+    ctx.obj["fmt"] = fmt or "table"
+    ctx.obj["profile"] = profile
+    apply_profile(profile or active_profile_name())
+
+
+# ── page ──────────────────────────────────────────────────────────────────────
+
+@cli.group()
+def page() -> None:
+    """Import, crawl, search, and extract web pages."""
+
+
+@page.command("import")
+@click.argument("urls", nargs=-1, required=True, metavar="URL [URL]...")
+@click.option("--collection", default=None, show_default="web", help="Collection name (overrides BLUE_WEB_COLLECTION).")
+@_log_options
+@click.pass_context
+def page_import(ctx: click.Context, urls: tuple[str, ...], collection: Optional[str], log: bool, log_limit: int) -> None:
+    """Fetch and import one or more web pages.
+
+    Extracts main content, strips boilerplate, chunks, enriches, and upserts to
+    the configured vector store. Re-importing the same URL is safe — URL-hash
+    deduplication means the same final URL always produces the same chunk IDs.
+
+    Pages that fail to extract are reported and skipped; the rest continue.
+    """
+    _configure_logging(log, log_limit)
+    fmt = ctx.obj["fmt"]
+    coll = collection or _default_collection()
+    try:
+        source = get_source()
+    except Exception as exc:
+        _err(f"Failed to build source: {exc}", fmt)
+
+    per_url: dict[str, list] = {}
+    had_failure = False
+    for url in urls:
+        try:
+            records = source.execute_query({"op": "WEB.INGEST", "url": url, "collection": coll})
+            per_url[url] = records
+            if not records:
+                had_failure = True
+        except Exception as exc:
+            click.echo(f"Error importing {url}: {exc}", err=True)
+            per_url[url] = []
+            had_failure = True
+
+    if fmt in ("json", "nl"):
+        output = []
+        for url, records in per_url.items():
+            if records:
+                first = records[0]
+                output.append({
+                    "page_id": first.get("page_id"),
+                    "url": url,
+                    "title": first.get("title"),
+                    "domain": first.get("domain"),
+                    "date": first.get("date"),
+                    "chunk_count": len(records),
+                    "collection": coll,
+                })
+            else:
+                output.append({"url": url, "error": "no content extracted"})
+        _emit(output[0] if len(output) == 1 else output, fmt)
+        if had_failure:
+            sys.exit(1)
+        return
+
+    if len(urls) == 1:
+        url = urls[0]
+        records = per_url[url]
+        if not records:
+            _err(f"No content extracted from {url}")
+        first = records[0]
+        click.echo(f"Imported {len(records)} chunk{'s' if len(records) != 1 else ''} from {url}")
+        if first.get("title"):
+            click.echo(f"  title:      {first['title']}")
+        click.echo(f"  domain:     {first['domain']}")
+        if first.get("date"):
+            click.echo(f"  date:       {first['date']}")
+        click.echo(f"  collection: {coll}")
+    else:
+        total_chunks = sum(len(r) for r in per_url.values())
+        total_pages = sum(1 for r in per_url.values() if r)
+        click.echo(f"Imported {total_pages} page{'s' if total_pages != 1 else ''}, {total_chunks} chunks")
+        for url, records in per_url.items():
+            if records:
+                click.echo(f"  ✓ {url}  ({len(records)} chunks)")
+            else:
+                click.echo(f"  ✗ {url}  (no content)")
+        click.echo(f"\n  collection: {coll}")
+
+    if had_failure:
+        sys.exit(1)
+
+
+@page.command("crawl")
+@click.argument("url")
+@click.option("--depth", default=1, show_default=True, metavar="N", help="Crawl depth from seed.")
+@click.option("--max-pages", "max_pages", default=10, show_default=True, metavar="N", help="Max pages to import.")
+@click.option("--allow-external", "allow_external", is_flag=True, default=False,
+              help="Follow links outside the seed domain.")
+@click.option("--collection", default=None, show_default="web", help="Collection name (overrides BLUE_WEB_COLLECTION).")
+@_log_options
+@click.pass_context
+def page_crawl(
+    ctx: click.Context,
+    url: str,
+    depth: int,
+    max_pages: int,
+    allow_external: bool,
+    collection: Optional[str],
+    log: bool,
+    log_limit: int,
+) -> None:
+    """BFS-crawl a site from a seed URL and import all reachable pages.
+
+    Follows links up to DEPTH hops from the seed. Stops after MAX_PAGES pages
+    regardless of depth. By default stays within the seed domain.
+    Pages that fail to fetch or extract are skipped silently.
+    """
+    _configure_logging(log, log_limit)
+    fmt = ctx.obj["fmt"]
+    coll = collection or _default_collection()
+    try:
+        source = get_source()
+        records = source.execute_query({
+            "op": "WEB.CRAWL",
+            "url": url,
+            "depth": depth,
+            "max_pages": max_pages,
+            "same_domain_only": not allow_external,
+            "collection": coll,
+        })
+    except Exception as exc:
+        _err(str(exc), fmt)
+
+    ingested_urls = sorted({r["url"] for r in records})
+
+    if fmt in ("json", "nl"):
+        _emit({
+            "chunk_count": len(records),
+            "pages_imported": len(ingested_urls),
+            "urls": ingested_urls,
+            "collection": coll,
+        }, fmt)
+        return
+
+    n = len(ingested_urls)
+    click.echo(f"Crawled {n} page{'s' if n != 1 else ''}, {len(records)} chunks  [seed: {url}]")
+    for u in ingested_urls:
+        click.echo(f"  {u}")
+    click.echo(f"\n  collection: {coll}")
+
+
+@page.command("search")
 @click.argument("query")
 @click.option("--limit", "-k", default=5, show_default=True, metavar="N", help="Maximum number of chunks to return.")
-@click.option("--collection", default=None, help="Collection name (overrides BLUE_WEB_COLLECTION).")
+@click.option("--collection", default=None, show_default="web", help="Collection name (overrides BLUE_WEB_COLLECTION).")
 @click.pass_context
-def search(ctx: click.Context, query: str, limit: int, collection: Optional[str]) -> None:
-    """Search ingested pages by semantic similarity.
+def page_search(ctx: click.Context, query: str, limit: int, collection: Optional[str]) -> None:
+    """Search imported pages by semantic similarity.
 
     Embeds the query and returns the k most relevant chunks from the vector
     store. Requires BLUE_WEB_REDIS_HOST and an indexed collection.
     """
+    fmt = ctx.obj["fmt"]
     coll = collection or _default_collection()
     try:
         source = get_source()
         results = source.execute_query({"op": "WEB.SEARCH", "query": query, "k": limit, "collection": coll})
     except Exception as exc:
-        _err(str(exc))
+        _err(str(exc), fmt)
 
-    if ctx.obj["as_json"]:
-        click.echo(json.dumps({"results": results, "count": len(results)}, indent=2, default=str))
+    if fmt == "nl":
+        _emit(results, fmt)
+        return
+    if fmt == "json":
+        _emit({"results": results, "count": len(results)}, fmt)
         return
     _print_results(results, query)
 
 
-# ── search-web ────────────────────────────────────────────────────────────────
-
-@cli.command("search-web")
-@click.argument("query")
-@click.option("--urls", default=5, show_default=True, metavar="N", help="Number of URLs to fetch from the live search API.")
-@click.option("--collection", default=None, help="Collection name (overrides BLUE_WEB_COLLECTION).")
+@page.command("extract")
+@click.argument("url")
+@click.option("--schema", "schema_str", default=None, metavar="JSON",
+              help="JSON Schema as a JSON string.")
+@click.option("--schema-file", "schema_file", default=None,
+              type=click.Path(exists=True), metavar="FILE",
+              help="Path to a JSON Schema file.")
 @_log_options
 @click.pass_context
-def search_web(ctx: click.Context, query: str, urls: int, collection: Optional[str], log: bool, log_limit: int) -> None:
-    """Search the live web, ingest the top results, and return ranked chunks.
+def page_extract(
+    ctx: click.Context,
+    url: str,
+    schema_str: Optional[str],
+    schema_file: Optional[str],
+    log: bool,
+    log_limit: int,
+) -> None:
+    """Extract structured fields from a web page via a JSON Schema.
 
-    Calls Tavily to find the k most relevant URLs, fetches and ingests each
+    Fetches the URL, extracts main body text, and calls an LLM to fill in the
+    fields described by the schema. Pass the schema inline as a JSON string or
+    via a file.
+
+    Examples:
+
+    \b
+        blue-web page extract https://example.com/product \\
+            --schema '{"properties": {"title": {"type": "string"}, "price": {"type": "number"}}}'
+        blue-web page extract https://example.com/product --schema-file product_schema.json
+
+    Requires OPENAI_API_KEY.
+    """
+    _configure_logging(log, log_limit)
+    fmt = ctx.obj["fmt"]
+    if not schema_str and not schema_file:
+        _usage_err("Provide --schema JSON or --schema-file FILE", fmt)
+
+    try:
+        if schema_file:
+            with open(schema_file) as fh:
+                schema = json.load(fh)
+        else:
+            schema = json.loads(schema_str)
+    except Exception as exc:
+        _usage_err(f"Invalid schema: {exc}", fmt)
+
+    try:
+        source = get_source()
+        result = source.execute_query({"op": "WEB.EXTRACT", "url": url, "schema": schema})
+    except Exception as exc:
+        _err(str(exc), fmt)
+
+    if fmt in ("json", "nl"):
+        _emit(result, fmt)
+        return
+
+    if not result:
+        click.echo("No fields extracted (page may have no extractable content).")
+        return
+
+    click.echo(f"Extracted from {url}\n")
+    for key, val in result.items():
+        click.echo(f"  {key}: {val}")
+
+
+# ── feed ──────────────────────────────────────────────────────────────────────
+
+@cli.group()
+def feed() -> None:
+    """Import articles from RSS and Atom feeds."""
+
+
+@feed.command("import")
+@click.argument("url")
+@click.option("--since", metavar="ISO8601", default=None,
+              help="Only import entries published at or after this date (e.g. 2026-08-01T00:00:00Z).")
+@click.option("--max-entries", "max_entries", metavar="N", default=None, type=int,
+              help="Max entries to process after date filtering.")
+@click.option("--collection", default=None, show_default="web", help="Collection name (overrides BLUE_WEB_COLLECTION).")
+@_log_options
+@click.pass_context
+def feed_import(
+    ctx: click.Context,
+    url: str,
+    since: Optional[str],
+    max_entries: Optional[int],
+    collection: Optional[str],
+    log: bool,
+    log_limit: int,
+) -> None:
+    """Import articles from an RSS or Atom feed.
+
+    Fetches the feed, parses all entries, and imports each article URL. Use
+    --since to skip entries older than a cutoff — useful for daily incremental
+    runs. Entries without a publication date are always included.
+
+    Requires: pip install 'blue-data-web-source[feed]'
+    """
+    _configure_logging(log, log_limit)
+    fmt = ctx.obj["fmt"]
+    coll = collection or _default_collection()
+    request: dict = {"op": "WEB.INGEST_FEED", "url": url, "collection": coll}
+    if since:
+        request["since"] = since
+    if max_entries is not None:
+        request["max_entries"] = max_entries
+
+    try:
+        source = get_source()
+        records = source.execute_query(request)
+    except Exception as exc:
+        _err(str(exc), fmt)
+
+    imported_urls = sorted({r["url"] for r in records})
+
+    if fmt in ("json", "nl"):
+        _emit({
+            "chunk_count": len(records),
+            "articles_imported": len(imported_urls),
+            "urls": imported_urls,
+            "collection": coll,
+        }, fmt)
+        return
+
+    n = len(imported_urls)
+    click.echo(f"Feed: {url}")
+    click.echo(f"  {n} article{'s' if n != 1 else ''} imported, {len(records)} chunks")
+    for u in imported_urls:
+        click.echo(f"  {u}")
+    click.echo(f"\n  collection: {coll}")
+
+
+# ── index ─────────────────────────────────────────────────────────────────────
+
+@cli.group()
+def index() -> None:
+    """Manage vector indexes."""
+
+
+@index.command("ensure")
+@click.option("--collection", default=None, show_default="web", help="Collection name (overrides BLUE_WEB_COLLECTION).")
+@click.pass_context
+def index_ensure(ctx: click.Context, collection: Optional[str]) -> None:
+    """Create the vector index for a collection.
+
+    Must be called once before the first import when using a vector store.
+    Safe to call multiple times — skips creation if the index already exists.
+    """
+    fmt = ctx.obj["fmt"]
+    coll = collection or _default_collection()
+    try:
+        source = get_source()
+        source.execute_query({"op": "WEB.ENSURE_INDEX", "collection": coll})
+    except Exception as exc:
+        _err(str(exc), fmt)
+
+    if fmt in ("json", "nl"):
+        _emit({"collection": coll}, fmt)
+    else:
+        click.echo(f"Index ready: {coll}")
+
+
+# ── live ──────────────────────────────────────────────────────────────────────
+
+@cli.group()
+def live() -> None:
+    """Search the live web."""
+
+
+@live.command("search")
+@click.argument("query")
+@click.option("--urls", default=5, show_default=True, metavar="N", help="Number of URLs to fetch from the live search API.")
+@click.option("--collection", default=None, show_default="web", help="Collection name (overrides BLUE_WEB_COLLECTION).")
+@_log_options
+@click.pass_context
+def live_search(ctx: click.Context, query: str, urls: int, collection: Optional[str], log: bool, log_limit: int) -> None:
+    """Search the live web, import the top results, and return ranked chunks.
+
+    Calls Tavily to find the k most relevant URLs, fetches and imports each
     on the fly, then returns semantically ranked chunks. Results are always fresh
     rather than from a pre-built index.
 
     Requires TAVILY_API_KEY and BLUE_WEB_REDIS_HOST.
     """
     _configure_logging(log, log_limit)
+    fmt = ctx.obj["fmt"]
     coll = collection or _default_collection()
     try:
         source = get_source()
         results = source.execute_query({"op": "WEB.SEARCH_WEB", "query": query, "k": urls, "collection": coll})
     except Exception as exc:
-        _err(str(exc))
+        _err(str(exc), fmt)
 
-    if ctx.obj["as_json"]:
-        click.echo(json.dumps({"results": results, "count": len(results)}, indent=2, default=str))
+    if fmt == "nl":
+        _emit(results, fmt)
+        return
+    if fmt == "json":
+        _emit({"results": results, "count": len(results)}, fmt)
         return
     _print_results(results, query)
 
 
-# ── config ────────────────────────────────────────────────────────────────────
+# ── profile ───────────────────────────────────────────────────────────────────
 
 @cli.group()
-def config() -> None:
-    """Manage CLI configuration and profiles."""
-
-
-@config.group()
 def profile() -> None:
     """Manage named configuration profiles.
 
     Profiles store non-secret settings so you can switch between environments
-    (e.g. dev, staging, prod) without re-exporting variables.  API keys must
+    (e.g. dev, staging, prod) without re-exporting variables. API keys must
     stay in environment variables — they are never written to a profile.
 
     Configuration is stored in ~/.blue-web/profiles.json.
@@ -515,60 +557,36 @@ def profile() -> None:
     """
 
 
-@profile.command("add")
-@click.argument("name")
-@click.option("--redis-host",      "redis_host",      default=None, metavar="HOST",
-              help="Redis host (BLUE_WEB_REDIS_HOST).")
-@click.option("--redis-port",      "redis_port",      default=None, metavar="PORT", type=int,
-              help="Redis port (BLUE_WEB_REDIS_PORT).")
-@click.option("--collection",                         default=None, metavar="NAME",
-              help="Default collection name (BLUE_WEB_COLLECTION).")
-@click.option("--embedding",                          default=None,
-              type=click.Choice(["openai", "dummy"]),
-              help="Embedding backend (BLUE_WEB_EMBEDDING).")
-@click.option("--chunk-size",      "chunk_size",      default=None, metavar="N", type=int,
-              help="Chunk word-count target (BLUE_WEB_CHUNK_SIZE).")
-@click.option("--overlap",                            default=None, metavar="N", type=int,
-              help="Chunk overlap in words (BLUE_WEB_OVERLAP).")
-@click.option("--timeout",                            default=None, metavar="SECS", type=float,
-              help="HTTP timeout in seconds (BLUE_WEB_TIMEOUT).")
-@click.option("--enricher",                           default=None,
-              type=click.Choice(["none", "basic", "llm"]),
-              help="Enricher backend (BLUE_WEB_ENRICHER).")
-@click.option("--llm-model",       "llm_model",       default=None, metavar="MODEL",
-              help="OpenAI model for llm enricher (BLUE_WEB_LLM_MODEL).")
-@click.option("--embedding-model", "embedding_model", default=None, metavar="MODEL",
-              help="OpenAI embedding model name (OPENAI_EMBEDDING_MODEL).")
-@click.pass_context
-def profile_add(
-    ctx: click.Context,
-    name: str,
-    redis_host: Optional[str],
-    redis_port: Optional[int],
-    collection: Optional[str],
-    embedding: Optional[str],
-    chunk_size: Optional[int],
-    overlap: Optional[int],
-    timeout: Optional[float],
-    enricher: Optional[str],
-    llm_model: Optional[str],
-    embedding_model: Optional[str],
-) -> None:
-    """Create a new named profile.
+def _profile_options(fn):
+    fn = click.option("--embedding-model", "embedding_model", default=None, metavar="MODEL",
+                      help="OpenAI embedding model name (OPENAI_EMBEDDING_MODEL).")(fn)
+    fn = click.option("--llm-model",       "llm_model",       default=None, metavar="MODEL",
+                      help="OpenAI model for llm enricher (BLUE_WEB_LLM_MODEL).")(fn)
+    fn = click.option("--enricher",                           default=None,
+                      type=click.Choice(["none", "basic", "llm"]),
+                      help="Enricher backend (BLUE_WEB_ENRICHER).")(fn)
+    fn = click.option("--timeout",                            default=None, metavar="SECS", type=float,
+                      help="HTTP timeout in seconds (BLUE_WEB_TIMEOUT).")(fn)
+    fn = click.option("--overlap",                            default=None, metavar="N", type=int,
+                      help="Chunk overlap in words (BLUE_WEB_OVERLAP).")(fn)
+    fn = click.option("--chunk-size",      "chunk_size",      default=None, metavar="N", type=int,
+                      help="Chunk word-count target (BLUE_WEB_CHUNK_SIZE).")(fn)
+    fn = click.option("--embedding",                          default=None,
+                      type=click.Choice(["openai", "dummy"]),
+                      help="Embedding backend (BLUE_WEB_EMBEDDING).")(fn)
+    fn = click.option("--collection",                         default=None, metavar="NAME",
+                      help="Default collection name (BLUE_WEB_COLLECTION).")(fn)
+    fn = click.option("--redis-port",      "redis_port",      default=None, metavar="PORT", type=int,
+                      help="Redis port (BLUE_WEB_REDIS_PORT).")(fn)
+    fn = click.option("--redis-host",      "redis_host",      default=None, metavar="HOST",
+                      help="Redis host (BLUE_WEB_REDIS_HOST).")(fn)
+    return fn
 
-    Fails if a profile with that name already exists — use
-    'blue-web config profile config NAME' to update an existing one.
 
-    \b
-    Example:
-        blue-web config profile add prod \\
-            --redis-host redis.prod.internal \\
-            --collection prod-web \\
-            --embedding openai
-    """
-    if get_profile(name) is not None:
-        _err(f"Profile '{name}' already exists. Use 'config profile config {name}' to update it.")
-
+def _collect_settings(
+    redis_host, redis_port, collection, embedding,
+    chunk_size, overlap, timeout, enricher, llm_model, embedding_model,
+) -> dict:
     settings: dict = {}
     if redis_host      is not None: settings["redis_host"]      = redis_host
     if redis_port      is not None: settings["redis_port"]      = redis_port
@@ -580,13 +598,44 @@ def profile_add(
     if enricher        is not None: settings["enricher"]        = enricher
     if llm_model       is not None: settings["llm_model"]       = llm_model
     if embedding_model is not None: settings["embedding_model"] = embedding_model
+    return settings
 
+
+@profile.command("add")
+@click.argument("name")
+@_profile_options
+@click.pass_context
+def profile_add(
+    ctx: click.Context, name: str,
+    redis_host, redis_port, collection, embedding,
+    chunk_size, overlap, timeout, enricher, llm_model, embedding_model,
+) -> None:
+    """Create a new named profile.
+
+    Fails if a profile with that name already exists — use
+    'blue-web profile config NAME' to update an existing one.
+
+    \b
+    Example:
+        blue-web profile add prod \\
+            --redis-host redis.prod.internal \\
+            --collection prod-web \\
+            --embedding openai
+    """
+    fmt = ctx.obj["fmt"]
+    if get_profile(name) is not None:
+        _err(f"Profile '{name}' already exists. Use 'profile config {name}' to update it.", fmt)
+
+    settings = _collect_settings(
+        redis_host, redis_port, collection, embedding,
+        chunk_size, overlap, timeout, enricher, llm_model, embedding_model,
+    )
     if not settings:
-        _usage_err("Provide at least one setting (e.g. --redis-host HOST --collection NAME).")
+        _usage_err("Provide at least one setting (e.g. --redis-host HOST --collection NAME).", fmt)
 
     upsert_profile(name, settings)
-    if ctx.obj["as_json"]:
-        click.echo(json.dumps({"profile": name, "settings": get_profile(name)}))
+    if fmt in ("json", "nl"):
+        _emit({"profile": name, "settings": get_profile(name)}, fmt)
     else:
         click.echo(f"Profile '{name}' created.")
 
@@ -596,83 +645,47 @@ def profile_add(
 @click.pass_context
 def profile_remove(ctx: click.Context, name: str) -> None:
     """Remove a named profile."""
+    fmt = ctx.obj["fmt"]
     if not remove_profile(name):
-        _err(f"Profile '{name}' does not exist.")
-    if ctx.obj["as_json"]:
-        click.echo(json.dumps({"removed": name}))
+        _err(f"Profile '{name}' does not exist.", fmt)
+    if fmt in ("json", "nl"):
+        _emit({"removed": name}, fmt)
     else:
         click.echo(f"Profile '{name}' removed.")
 
 
 @profile.command("config")
 @click.argument("name")
-@click.option("--redis-host",      "redis_host",      default=None, metavar="HOST",
-              help="Redis host (BLUE_WEB_REDIS_HOST).")
-@click.option("--redis-port",      "redis_port",      default=None, metavar="PORT", type=int,
-              help="Redis port (BLUE_WEB_REDIS_PORT).")
-@click.option("--collection",                         default=None, metavar="NAME",
-              help="Default collection name (BLUE_WEB_COLLECTION).")
-@click.option("--embedding",                          default=None,
-              type=click.Choice(["openai", "dummy"]),
-              help="Embedding backend (BLUE_WEB_EMBEDDING).")
-@click.option("--chunk-size",      "chunk_size",      default=None, metavar="N", type=int,
-              help="Chunk word-count target (BLUE_WEB_CHUNK_SIZE).")
-@click.option("--overlap",                            default=None, metavar="N", type=int,
-              help="Chunk overlap in words (BLUE_WEB_OVERLAP).")
-@click.option("--timeout",                            default=None, metavar="SECS", type=float,
-              help="HTTP timeout in seconds (BLUE_WEB_TIMEOUT).")
-@click.option("--enricher",                           default=None,
-              type=click.Choice(["none", "basic", "llm"]),
-              help="Enricher backend (BLUE_WEB_ENRICHER).")
-@click.option("--llm-model",       "llm_model",       default=None, metavar="MODEL",
-              help="OpenAI model for llm enricher (BLUE_WEB_LLM_MODEL).")
-@click.option("--embedding-model", "embedding_model", default=None, metavar="MODEL",
-              help="OpenAI embedding model name (OPENAI_EMBEDDING_MODEL).")
+@_profile_options
 @click.pass_context
 def profile_config(
-    ctx: click.Context,
-    name: str,
-    redis_host: Optional[str],
-    redis_port: Optional[int],
-    collection: Optional[str],
-    embedding: Optional[str],
-    chunk_size: Optional[int],
-    overlap: Optional[int],
-    timeout: Optional[float],
-    enricher: Optional[str],
-    llm_model: Optional[str],
-    embedding_model: Optional[str],
+    ctx: click.Context, name: str,
+    redis_host, redis_port, collection, embedding,
+    chunk_size, overlap, timeout, enricher, llm_model, embedding_model,
 ) -> None:
     """Update settings in an existing profile.
 
     Merges the supplied options into the profile; omitted options are unchanged.
-    Use 'blue-web config profile add NAME' to create a new profile first.
+    Use 'blue-web profile add NAME' to create a new profile first.
 
     \b
     Example:
-        blue-web config profile config prod --redis-host redis2.prod.internal
+        blue-web profile config prod --redis-host redis2.prod.internal
     """
+    fmt = ctx.obj["fmt"]
     if get_profile(name) is None:
-        _err(f"Profile '{name}' does not exist. Use 'config profile add {name}' to create it.")
+        _err(f"Profile '{name}' does not exist. Use 'profile add {name}' to create it.", fmt)
 
-    settings: dict = {}
-    if redis_host      is not None: settings["redis_host"]      = redis_host
-    if redis_port      is not None: settings["redis_port"]      = redis_port
-    if collection      is not None: settings["collection"]      = collection
-    if embedding       is not None: settings["embedding"]       = embedding
-    if chunk_size      is not None: settings["chunk_size"]      = chunk_size
-    if overlap         is not None: settings["overlap"]         = overlap
-    if timeout         is not None: settings["timeout"]         = timeout
-    if enricher        is not None: settings["enricher"]        = enricher
-    if llm_model       is not None: settings["llm_model"]       = llm_model
-    if embedding_model is not None: settings["embedding_model"] = embedding_model
-
+    settings = _collect_settings(
+        redis_host, redis_port, collection, embedding,
+        chunk_size, overlap, timeout, enricher, llm_model, embedding_model,
+    )
     if not settings:
-        _usage_err("Provide at least one setting to update (e.g. --redis-host HOST).")
+        _usage_err("Provide at least one setting to update (e.g. --redis-host HOST).", fmt)
 
     upsert_profile(name, settings)
-    if ctx.obj["as_json"]:
-        click.echo(json.dumps({"profile": name, "settings": get_profile(name)}))
+    if fmt in ("json", "nl"):
+        _emit({"profile": name, "settings": get_profile(name)}, fmt)
     else:
         click.echo(f"Profile '{name}' updated.")
 
@@ -681,20 +694,17 @@ def profile_config(
 @click.pass_context
 def profile_list(ctx: click.Context) -> None:
     """List all profiles."""
+    fmt = ctx.obj["fmt"]
     names = list_profiles()
     default = default_profile_name()
     active = active_profile_name()
 
-    if ctx.obj["as_json"]:
-        click.echo(json.dumps({
-            "profiles": names,
-            "default": default,
-            "active": active,
-        }))
+    if fmt in ("json", "nl"):
+        _emit({"profiles": names, "default": default, "active": active}, fmt)
         return
 
     if not names:
-        click.echo("No profiles defined.  Use 'blue-web config profile add NAME' to create one.")
+        click.echo("No profiles defined.  Use 'blue-web profile add NAME' to create one.")
         return
 
     for n in names:
@@ -710,16 +720,17 @@ def profile_inspect(ctx: click.Context, name: Optional[str]) -> None:
 
     NAME defaults to the currently active profile when omitted.
     """
+    fmt = ctx.obj["fmt"]
     resolved = name or active_profile_name()
     if not resolved:
-        _usage_err("No profile specified and no active profile is set.")
+        _usage_err("No profile specified and no active profile is set.", fmt)
 
     data = get_profile(resolved)
     if data is None:
-        _err(f"Profile '{resolved}' does not exist.")
+        _err(f"Profile '{resolved}' does not exist.", fmt)
 
-    if ctx.obj["as_json"]:
-        click.echo(json.dumps({"profile": resolved, "settings": data}))
+    if fmt in ("json", "nl"):
+        _emit({"profile": resolved, "settings": data}, fmt)
         return
 
     click.echo(f"Profile: {resolved}")
@@ -736,11 +747,12 @@ def profile_inspect(ctx: click.Context, name: Optional[str]) -> None:
 @click.pass_context
 def profile_select(ctx: click.Context, name: str) -> None:
     """Set the default profile used when --profile is not specified."""
+    fmt = ctx.obj["fmt"]
     if get_profile(name) is None:
-        _err(f"Profile '{name}' does not exist.")
+        _err(f"Profile '{name}' does not exist.", fmt)
     set_default(name)
-    if ctx.obj["as_json"]:
-        click.echo(json.dumps({"default": name}))
+    if fmt in ("json", "nl"):
+        _emit({"default": name}, fmt)
     else:
         click.echo(f"Default profile set to '{name}'.")
 

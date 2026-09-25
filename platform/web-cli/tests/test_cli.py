@@ -52,13 +52,13 @@ def _chunk(url="https://example.com/a", domain="example.com", title="Example Art
 class TestEnsureIndex:
     def test_ok(self, runner, mock_source):
         mock_source.execute_query.return_value = None
-        result = runner.invoke(cli, ["ensure-index", "--collection", "test"])
+        result = runner.invoke(cli, ["index", "ensure", "--collection", "test"])
         assert result.exit_code == 0
         assert "test" in result.output
 
     def test_json_output(self, runner, mock_source):
         mock_source.execute_query.return_value = None
-        result = runner.invoke(cli, ["--json", "ensure-index", "--collection", "test"])
+        result = runner.invoke(cli, ["--format", "json", "index", "ensure", "--collection", "test"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["collection"] == "test"
@@ -66,13 +66,13 @@ class TestEnsureIndex:
 
     def test_idempotent(self, runner, mock_source):
         mock_source.execute_query.return_value = None
-        runner.invoke(cli, ["ensure-index", "--collection", "test"])
-        result = runner.invoke(cli, ["ensure-index", "--collection", "test"])
+        runner.invoke(cli, ["index", "ensure", "--collection", "test"])
+        result = runner.invoke(cli, ["index", "ensure", "--collection", "test"])
         assert result.exit_code == 0
 
     def test_error_propagates(self, runner, mock_source):
         mock_source.execute_query.side_effect = RuntimeError("Redis not available")
-        result = runner.invoke(cli, ["ensure-index"])
+        result = runner.invoke(cli, ["index", "ensure"])
         assert result.exit_code == 1
 
 
@@ -81,14 +81,14 @@ class TestEnsureIndex:
 class TestIngest:
     def test_single_url(self, runner, mock_source):
         mock_source.execute_query.return_value = [_chunk()]
-        result = runner.invoke(cli, ["ingest", "https://example.com/a"])
+        result = runner.invoke(cli, ["page", "import", "https://example.com/a"])
         assert result.exit_code == 0
         assert "1 chunk" in result.output
         assert "example.com" in result.output
 
     def test_single_url_json(self, runner, mock_source):
         mock_source.execute_query.return_value = [_chunk(), _chunk(n=1)]
-        result = runner.invoke(cli, ["--json", "ingest", "https://example.com/a"])
+        result = runner.invoke(cli, ["--format", "json", "page", "import", "https://example.com/a"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["chunk_count"] == 2
@@ -100,7 +100,7 @@ class TestIngest:
             [_chunk(url="https://example.com/a")],
             [_chunk(url="https://example.com/b")],
         ]
-        result = runner.invoke(cli, ["ingest", "https://example.com/a", "https://example.com/b"])
+        result = runner.invoke(cli, ["page", "import", "https://example.com/a", "https://example.com/b"])
         assert result.exit_code == 0
         assert "2 pages" in result.output
         assert "✓" in result.output
@@ -110,7 +110,7 @@ class TestIngest:
             [_chunk(url="https://example.com/a")],
             [_chunk(url="https://example.com/b")],
         ]
-        result = runner.invoke(cli, ["--json", "ingest", "https://example.com/a", "https://example.com/b"])
+        result = runner.invoke(cli, ["--format", "json", "page", "import", "https://example.com/a", "https://example.com/b"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert isinstance(data, list)
@@ -118,7 +118,7 @@ class TestIngest:
 
     def test_no_content_single_url_exits_nonzero(self, runner, mock_source):
         mock_source.execute_query.return_value = []
-        result = runner.invoke(cli, ["ingest", "https://example.com/empty"])
+        result = runner.invoke(cli, ["page", "import", "https://example.com/empty"])
         assert result.exit_code == 1
 
     def test_skipped_url_shown_in_multi(self, runner, mock_source):
@@ -126,7 +126,7 @@ class TestIngest:
             [_chunk(url="https://example.com/a")],
             [],
         ]
-        result = runner.invoke(cli, ["ingest", "https://example.com/a", "https://example.com/b"])
+        result = runner.invoke(cli, ["page", "import", "https://example.com/a", "https://example.com/b"])
         assert result.exit_code == 1
         assert "✗" in result.output
 
@@ -135,7 +135,7 @@ class TestIngest:
             [_chunk(url="https://example.com/a")],
             [],
         ]
-        result = runner.invoke(cli, ["--json", "ingest", "https://example.com/a", "https://example.com/b"])
+        result = runner.invoke(cli, ["--format", "json", "page", "import", "https://example.com/a", "https://example.com/b"])
         assert result.exit_code == 1
         data = json.loads(result.output)
         assert isinstance(data, list)
@@ -143,7 +143,7 @@ class TestIngest:
 
     def test_collection_passed_in_request(self, runner, mock_source):
         mock_source.execute_query.return_value = [_chunk()]
-        runner.invoke(cli, ["ingest", "https://example.com/a", "--collection", "news"])
+        runner.invoke(cli, ["page", "import", "https://example.com/a", "--collection", "news"])
         call_args = mock_source.execute_query.call_args[0][0]
         assert call_args["collection"] == "news"
 
@@ -156,36 +156,36 @@ class TestCrawl:
             _chunk(url="https://example.com/"),
             _chunk(url="https://example.com/about"),
         ]
-        result = runner.invoke(cli, ["crawl", "https://example.com"])
+        result = runner.invoke(cli, ["page", "crawl", "https://example.com"])
         assert result.exit_code == 0
         assert "2 pages" in result.output
 
     def test_json_output(self, runner, mock_source):
         mock_source.execute_query.return_value = [_chunk()]
-        result = runner.invoke(cli, ["--json", "crawl", "https://example.com"])
+        result = runner.invoke(cli, ["--format", "json", "page", "crawl", "https://example.com"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert "pages_ingested" in data
+        assert "pages_imported" in data
         assert "chunk_count" in data
         assert "urls" in data
         assert "seed" not in data
 
     def test_depth_and_max_pages_passed(self, runner, mock_source):
         mock_source.execute_query.return_value = []
-        runner.invoke(cli, ["crawl", "https://example.com", "--depth", "3", "--max-pages", "50"])
+        runner.invoke(cli, ["page", "crawl", "https://example.com", "--depth", "3", "--max-pages", "50"])
         call_args = mock_source.execute_query.call_args[0][0]
         assert call_args["depth"] == 3
         assert call_args["max_pages"] == 50
 
     def test_same_domain_only_default(self, runner, mock_source):
         mock_source.execute_query.return_value = []
-        runner.invoke(cli, ["crawl", "https://example.com"])
+        runner.invoke(cli, ["page", "crawl", "https://example.com"])
         call_args = mock_source.execute_query.call_args[0][0]
         assert call_args["same_domain_only"] is True
 
     def test_allow_external_flag(self, runner, mock_source):
         mock_source.execute_query.return_value = []
-        runner.invoke(cli, ["crawl", "https://example.com", "--allow-external"])
+        runner.invoke(cli, ["page", "crawl", "https://example.com", "--allow-external"])
         call_args = mock_source.execute_query.call_args[0][0]
         assert call_args["same_domain_only"] is False
 
@@ -198,47 +198,47 @@ class TestFeed:
             _chunk(url="https://example.com/a1"),
             _chunk(url="https://example.com/a2"),
         ]
-        result = runner.invoke(cli, ["feed", "https://example.com/feed.xml"])
+        result = runner.invoke(cli, ["feed", "import", "https://example.com/feed.xml"])
         assert result.exit_code == 0
         assert "2 articles" in result.output
 
     def test_json_output(self, runner, mock_source):
         mock_source.execute_query.return_value = [_chunk()]
-        result = runner.invoke(cli, ["--json", "feed", "https://example.com/feed.xml"])
+        result = runner.invoke(cli, ["--format", "json", "feed", "import", "https://example.com/feed.xml"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert "articles_ingested" in data
+        assert "articles_imported" in data
         assert "chunk_count" in data
         assert "urls" in data
         assert "feed" not in data
 
     def test_since_passed(self, runner, mock_source):
         mock_source.execute_query.return_value = []
-        runner.invoke(cli, ["feed", "https://example.com/feed.xml", "--since", "2026-08-01T00:00:00Z"])
+        runner.invoke(cli, ["feed", "import", "https://example.com/feed.xml", "--since", "2026-08-01T00:00:00Z"])
         call_args = mock_source.execute_query.call_args[0][0]
         assert call_args["since"] == "2026-08-01T00:00:00Z"
 
     def test_since_absent_when_not_provided(self, runner, mock_source):
         mock_source.execute_query.return_value = []
-        runner.invoke(cli, ["feed", "https://example.com/feed.xml"])
+        runner.invoke(cli, ["feed", "import", "https://example.com/feed.xml"])
         call_args = mock_source.execute_query.call_args[0][0]
         assert "since" not in call_args
 
     def test_max_entries_passed(self, runner, mock_source):
         mock_source.execute_query.return_value = []
-        runner.invoke(cli, ["feed", "https://example.com/feed.xml", "--max-entries", "10"])
+        runner.invoke(cli, ["feed", "import", "https://example.com/feed.xml", "--max-entries", "10"])
         call_args = mock_source.execute_query.call_args[0][0]
         assert call_args["max_entries"] == 10
 
     def test_empty_feed(self, runner, mock_source):
         mock_source.execute_query.return_value = []
-        result = runner.invoke(cli, ["feed", "https://example.com/feed.xml"])
+        result = runner.invoke(cli, ["feed", "import", "https://example.com/feed.xml"])
         assert result.exit_code == 0
         assert "0 articles" in result.output
 
     def test_single_article(self, runner, mock_source):
         mock_source.execute_query.return_value = [_chunk(url="https://example.com/a1")]
-        result = runner.invoke(cli, ["feed", "https://example.com/feed.xml"])
+        result = runner.invoke(cli, ["feed", "import", "https://example.com/feed.xml"])
         assert result.exit_code == 0
         assert "1 article " in result.output
 
@@ -248,14 +248,14 @@ class TestFeed:
 class TestSearch:
     def test_results(self, runner, mock_source):
         mock_source.execute_query.return_value = [_chunk()]
-        result = runner.invoke(cli, ["search", "climate change"])
+        result = runner.invoke(cli, ["page", "search", "climate change"])
         assert result.exit_code == 0
         assert "1 result" in result.output
         assert "example.com" in result.output
 
     def test_json_output(self, runner, mock_source):
         mock_source.execute_query.return_value = [_chunk()]
-        result = runner.invoke(cli, ["--json", "search", "climate change"])
+        result = runner.invoke(cli, ["--format", "json", "page", "search", "climate change"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "results" in data
@@ -264,30 +264,30 @@ class TestSearch:
 
     def test_no_results(self, runner, mock_source):
         mock_source.execute_query.return_value = []
-        result = runner.invoke(cli, ["search", "nothing"])
+        result = runner.invoke(cli, ["page", "search", "nothing"])
         assert result.exit_code == 0
         assert "No results" in result.output
 
     def test_limit_passed(self, runner, mock_source):
         mock_source.execute_query.return_value = []
-        runner.invoke(cli, ["search", "query", "--limit", "10"])
+        runner.invoke(cli, ["page", "search", "query", "--limit", "10"])
         call_args = mock_source.execute_query.call_args[0][0]
         assert call_args["k"] == 10
 
     def test_limit_short_flag(self, runner, mock_source):
         mock_source.execute_query.return_value = []
-        runner.invoke(cli, ["search", "query", "-k", "7"])
+        runner.invoke(cli, ["page", "search", "query", "-k", "7"])
         call_args = mock_source.execute_query.call_args[0][0]
         assert call_args["k"] == 7
 
     def test_section_title_shown(self, runner, mock_source):
         mock_source.execute_query.return_value = [_chunk()]
-        result = runner.invoke(cli, ["search", "anything"])
+        result = runner.invoke(cli, ["page", "search", "anything"])
         assert "Introduction" in result.output
 
     def test_error_propagates(self, runner, mock_source):
         mock_source.execute_query.side_effect = ValueError("No vector store configured")
-        result = runner.invoke(cli, ["search", "query"])
+        result = runner.invoke(cli, ["page", "search", "query"])
         assert result.exit_code == 1
 
 
@@ -299,13 +299,13 @@ _SCHEMA_JSON = '{"properties": {"title": {"type": "string"}, "price": {"type": "
 class TestExtract:
     def test_basic(self, runner, mock_source):
         mock_source.execute_query.return_value = {"title": "Widget", "price": 29.99}
-        result = runner.invoke(cli, ["extract", "https://example.com", "--schema", _SCHEMA_JSON])
+        result = runner.invoke(cli, ["page", "extract", "https://example.com", "--schema", _SCHEMA_JSON])
         assert result.exit_code == 0
         assert "Widget" in result.output
 
     def test_json_output(self, runner, mock_source):
         mock_source.execute_query.return_value = {"title": "Widget", "price": 29.99}
-        result = runner.invoke(cli, ["--json", "extract", "https://example.com", "--schema", _SCHEMA_JSON])
+        result = runner.invoke(cli, ["--format", "json", "page", "extract", "https://example.com", "--schema", _SCHEMA_JSON])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["title"] == "Widget"
@@ -313,7 +313,7 @@ class TestExtract:
 
     def test_schema_passed_in_request(self, runner, mock_source):
         mock_source.execute_query.return_value = {}
-        runner.invoke(cli, ["extract", "https://example.com", "--schema", _SCHEMA_JSON])
+        runner.invoke(cli, ["page", "extract", "https://example.com", "--schema", _SCHEMA_JSON])
         call_args = mock_source.execute_query.call_args[0][0]
         assert call_args["op"] == "WEB.EXTRACT"
         assert call_args["url"] == "https://example.com"
@@ -323,27 +323,27 @@ class TestExtract:
         schema_file = tmp_path / "schema.json"
         schema_file.write_text(_SCHEMA_JSON)
         mock_source.execute_query.return_value = {"title": "Widget"}
-        result = runner.invoke(cli, ["extract", "https://example.com", "--schema-file", str(schema_file)])
+        result = runner.invoke(cli, ["page", "extract", "https://example.com", "--schema-file", str(schema_file)])
         assert result.exit_code == 0
         assert "Widget" in result.output
 
     def test_no_schema_exits_2(self, runner, mock_source):
-        result = runner.invoke(cli, ["extract", "https://example.com"])
+        result = runner.invoke(cli, ["page", "extract", "https://example.com"])
         assert result.exit_code == 2
 
     def test_invalid_schema_json_exits_2(self, runner, mock_source):
-        result = runner.invoke(cli, ["extract", "https://example.com", "--schema", "not-json"])
+        result = runner.invoke(cli, ["page", "extract", "https://example.com", "--schema", "not-json"])
         assert result.exit_code == 2
 
     def test_empty_result_shown(self, runner, mock_source):
         mock_source.execute_query.return_value = {}
-        result = runner.invoke(cli, ["extract", "https://example.com", "--schema", _SCHEMA_JSON])
+        result = runner.invoke(cli, ["page", "extract", "https://example.com", "--schema", _SCHEMA_JSON])
         assert result.exit_code == 0
         assert "No fields" in result.output
 
     def test_error_propagates(self, runner, mock_source):
         mock_source.execute_query.side_effect = RuntimeError("fetch failed")
-        result = runner.invoke(cli, ["extract", "https://example.com", "--schema", _SCHEMA_JSON])
+        result = runner.invoke(cli, ["page", "extract", "https://example.com", "--schema", _SCHEMA_JSON])
         assert result.exit_code == 1
 
 
@@ -390,13 +390,13 @@ class TestEnricherConfig:
 class TestSearchWeb:
     def test_results(self, runner, mock_source):
         mock_source.execute_query.return_value = [_chunk()]
-        result = runner.invoke(cli, ["search-web", "offshore wind energy"])
+        result = runner.invoke(cli, ["live", "search", "offshore wind energy"])
         assert result.exit_code == 0
         assert "1 result" in result.output
 
     def test_json_output(self, runner, mock_source):
         mock_source.execute_query.return_value = [_chunk()]
-        result = runner.invoke(cli, ["--json", "search-web", "offshore wind"])
+        result = runner.invoke(cli, ["--format", "json", "live", "search", "offshore wind"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "results" in data
@@ -404,19 +404,19 @@ class TestSearchWeb:
 
     def test_no_results(self, runner, mock_source):
         mock_source.execute_query.return_value = []
-        result = runner.invoke(cli, ["search-web", "nothing"])
+        result = runner.invoke(cli, ["live", "search", "nothing"])
         assert result.exit_code == 0
         assert "No results" in result.output
 
     def test_urls_passed(self, runner, mock_source):
         mock_source.execute_query.return_value = []
-        runner.invoke(cli, ["search-web", "query", "--urls", "3"])
+        runner.invoke(cli, ["live", "search", "query", "--urls", "3"])
         call_args = mock_source.execute_query.call_args[0][0]
         assert call_args["k"] == 3
 
     def test_error_propagates(self, runner, mock_source):
         mock_source.execute_query.side_effect = RuntimeError("TAVILY_API_KEY not set")
-        result = runner.invoke(cli, ["search-web", "query"])
+        result = runner.invoke(cli, ["live", "search", "query"])
         assert result.exit_code == 1
 
 
@@ -436,28 +436,28 @@ class TestLog:
     # --log is accepted on every network command
     def test_ingest_accepts_log(self, runner, mock_source):
         mock_source.execute_query.return_value = [_chunk()]
-        result = runner.invoke(cli, ["ingest", "--log", "https://example.com/a"])
+        result = runner.invoke(cli, ["page", "import", "--log", "https://example.com/a"])
         assert result.exit_code == 0
 
     def test_crawl_accepts_log(self, runner, mock_source):
         mock_source.execute_query.return_value = [_chunk()]
-        result = runner.invoke(cli, ["crawl", "--log", "https://example.com/"])
+        result = runner.invoke(cli, ["page", "crawl", "--log", "https://example.com/"])
         assert result.exit_code == 0
 
     def test_feed_accepts_log(self, runner, mock_source):
         mock_source.execute_query.return_value = [_chunk()]
-        result = runner.invoke(cli, ["feed", "--log", "https://example.com/rss.xml"])
+        result = runner.invoke(cli, ["feed", "import", "--log", "https://example.com/rss.xml"])
         assert result.exit_code == 0
 
     def test_search_web_accepts_log(self, runner, mock_source):
         mock_source.execute_query.return_value = [_chunk()]
-        result = runner.invoke(cli, ["search-web", "--log", "climate policy"])
+        result = runner.invoke(cli, ["live", "search", "--log", "climate policy"])
         assert result.exit_code == 0
 
     def test_extract_accepts_log(self, runner, mock_source):
         mock_source.execute_query.return_value = {"title": "x"}
         result = runner.invoke(cli, [
-            "extract", "--log",
+            "page", "extract", "--log",
             "--schema", '{"properties": {"title": {"type": "string"}}}',
             "https://example.com/",
         ])
@@ -466,13 +466,13 @@ class TestLog:
     # -l is the short alias
     def test_short_flag(self, runner, mock_source):
         mock_source.execute_query.return_value = [_chunk()]
-        result = runner.invoke(cli, ["ingest", "-l", "https://example.com/a"])
+        result = runner.invoke(cli, ["page", "import", "-l", "https://example.com/a"])
         assert result.exit_code == 0
 
     # --log does not corrupt JSON stdout (source is mocked → no log events fire)
     def test_log_does_not_corrupt_json_stdout(self, runner, mock_source):
         mock_source.execute_query.return_value = [_chunk(), _chunk(n=1)]
-        result = runner.invoke(cli, ["--json", "ingest", "--log", "https://example.com/a"])
+        result = runner.invoke(cli, ["--format", "json", "page", "import", "--log", "https://example.com/a"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["chunk_count"] == 2
@@ -518,6 +518,6 @@ class TestLog:
     def test_log_limit_option(self, runner, mock_source):
         mock_source.execute_query.return_value = [_chunk()]
         result = runner.invoke(cli, [
-            "ingest", "--log", "--log-limit", "100", "https://example.com/a",
+            "page", "import", "--log", "--log-limit", "100", "https://example.com/a",
         ])
         assert result.exit_code == 0
