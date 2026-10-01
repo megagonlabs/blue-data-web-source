@@ -17,6 +17,14 @@ BLUE_WEB_REDIS_HOST=localhost \
 python src/web_mcp/server.py
 ```
 
+## Testing
+
+```bash
+.venv/bin/pytest platform/web-mcp/tests/ -v
+```
+
+Tests call each tool function directly against a stubbed source, so no network, Redis, or API keys are required.
+
 ## Docs
 
 - [MCP server reference](../../docs/mcp.md)

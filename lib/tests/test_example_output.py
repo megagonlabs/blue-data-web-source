@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-_REPO = Path(__file__).parent.parent
+_REPO = Path(__file__).parent.parent.parent
 _EXAMPLES = _REPO / "examples"
 
 

@@ -1,5 +1,24 @@
 # Guide
 
+## Why blue-data-web-source
+
+Most web ingestion tools solve one problem at a time: fetch a URL, parse a feed, or run a search. Composing them into a live, updatable data source — one that skips unchanged content on every run, monitors feeds by publication date, searches and ingests in one call, and sits alongside SQL and document sources in the same registry — requires glue code you write yourself. `blue-data-web-source` is that composition pre-built, with a consistent chunk schema across all entry points and freshness tracking built into the ingest path rather than bolted on separately.
+
+- **Re-embedding unchanged pages.** A monitoring agent ingests hundreds of pages per scheduled run, most of them unchanged. `blue-data-web-source` tracks a SHA-256 hash of each page's extracted text; if the hash matches the stored value, `WEB.INGEST` returns `[]` immediately — no chunking, no embedding call, no upsert. Only new or changed pages touch the embedding model. See [Freshness tracking](features.md).
+- **Monitoring a publication without crawling or hand-maintained URL lists.** `WEB.INGEST_FEED` fetches an RSS/Atom feed, filters entries by `since` date so only new ones are considered, and ingests each article through the same pipeline as `WEB.INGEST`. Combined with freshness tracking, re-running only re-embeds articles whose content actually changed.
+- **Getting from search results to ranked chunks.** `WEB.SEARCH_WEB` does search → fetch/extract → chunk/embed → semantic rank → return chunks in one call, deduplicating against content already in the index.
+- **Web content alongside your other data.** `WebDataSource` extends blue-data's `DataSource` ABC and registers in the same `DataRegistry` as SQL sources, document collections, and knowledge graphs — same registration model, consistent chunk schema, no per-source glue code.
+
+## What it does not do
+
+**No JavaScript rendering.** Sites that require a headless browser — React/Next.js apps, login-walled content, dynamically loaded article bodies — return empty from `WebExtractor`. Use Firecrawl or Crawl4AI when JS execution is required.
+
+**Not built for high-volume crawling.** The BFS crawler is polite (robots.txt, rate limiting, retry backoff) and appropriate for tens to hundreds of pages. For thousands of pages or production-scale scraping, use Firecrawl or Apify.
+
+**Not the only RSS loader or web crawler.** LangChain and LlamaIndex both have RSS loaders and web crawlers. The differentiator here is freshness composition and DataRegistry integration, not RSS or crawling alone.
+
+---
+
 ## Quick start
 
 Fetch a page, extract its text, and inspect the chunks — no API key required:

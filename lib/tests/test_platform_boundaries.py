@@ -16,7 +16,7 @@ import ast
 import re
 from pathlib import Path
 
-_REPO_ROOT = Path(__file__).parent.parent
+_REPO_ROOT = Path(__file__).parent.parent.parent
 
 _FORBIDDEN_IMPORT_PREFIXES = [
     "blue_data_doc_source",
