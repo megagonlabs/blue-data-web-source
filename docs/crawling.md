@@ -128,7 +128,7 @@ for r in results:
 3. Runs `WEB.SEARCH` over the freshly ingested content
 4. Returns semantically ranked chunks
 
-Because ingested URLs are stored by URL-hash dedup, re-running the same query does not re-fetch already-ingested pages — their chunk IDs are already in the vector store.
+Re-running the same query **re-fetches and re-extracts** each result — the pipeline always fetches a page before it can compare anything, so there is no fetch short-circuit. What URL-hash dedup guarantees is stable *storage*: a page's chunk IDs are derived from its final URL, so re-ingesting overwrites the existing chunks instead of duplicating them. Re-embedding still happens on every run unless a `freshness_store` is configured — that skips re-chunking and re-embedding pages whose extracted text is unchanged (the page is still fetched). See [Features → Freshness tracking](features.md).
 
 ### Parameters
 

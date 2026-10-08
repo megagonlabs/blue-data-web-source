@@ -160,7 +160,7 @@ for r in results:
     print(r["url"], r["text"][:120])
 ```
 
-Re-running the same query does not re-fetch already-ingested URLs — URL-hash deduplication prevents double storage.
+Re-running the same query **re-fetches and re-extracts** each URL — the pipeline has no conditional-request short-circuit, so a page is always fetched before its content can be compared. URL-hash deduplication prevents double *storage* (chunk IDs derive from the URL, so re-ingest overwrites rather than duplicates), and a configured `freshness_store` additionally skips re-chunking and re-embedding pages whose extracted text has not changed.
 
 ---
 
