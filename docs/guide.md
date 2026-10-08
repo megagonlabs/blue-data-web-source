@@ -1,5 +1,24 @@
 # Guide
 
+## Why blue-data-web-source
+
+Most web ingestion tools solve one problem at a time: fetch a URL, parse a feed, or run a search. Composing them into a live, updatable data source — one that skips unchanged content on every run, monitors feeds by publication date, searches and ingests in one call, and sits alongside SQL and document sources in the same registry — requires glue code you write yourself. `blue-data-web-source` is that composition pre-built, with a consistent chunk schema across all entry points and freshness tracking built into the ingest path rather than bolted on separately.
+
+- **Re-embedding unchanged pages.** A monitoring agent ingests hundreds of pages per scheduled run, most of them unchanged. `blue-data-web-source` tracks a SHA-256 hash of each page's extracted text; if the hash matches the stored value, `WEB.INGEST` returns `[]` immediately — no chunking, no embedding call, no upsert. Only new or changed pages touch the embedding model. See [Freshness tracking](features.md).
+- **Monitoring a publication without crawling or hand-maintained URL lists.** `WEB.INGEST_FEED` fetches an RSS/Atom feed, filters entries by `since` date so only new ones are considered, and ingests each article through the same pipeline as `WEB.INGEST`. Combined with freshness tracking, re-running only re-embeds articles whose content actually changed.
+- **Getting from search results to ranked chunks.** `WEB.SEARCH_WEB` does search → fetch/extract → chunk/embed → semantic rank → return chunks in one call, deduplicating against content already in the index.
+- **Web content alongside your other data.** `WebDataSource` extends blue-data's `DataSource` ABC and registers in the same `DataRegistry` as SQL sources, document collections, and knowledge graphs — same registration model, consistent chunk schema, no per-source glue code.
+
+## What it does not do
+
+**No JavaScript rendering.** Sites that require a headless browser — React/Next.js apps, login-walled content, dynamically loaded article bodies — return empty from `WebExtractor`. Use Firecrawl or Crawl4AI when JS execution is required.
+
+**Not built for high-volume crawling.** The BFS crawler is polite (robots.txt, rate limiting, retry backoff) and appropriate for tens to hundreds of pages. For thousands of pages or production-scale scraping, use Firecrawl or Apify.
+
+**Not the only RSS loader or web crawler.** LangChain and LlamaIndex both have RSS loaders and web crawlers. The differentiator here is freshness composition and DataRegistry integration, not RSS or crawling alone.
+
+---
+
 ## Quick start
 
 Fetch a page, extract its text, and inspect the chunks — no API key required:
@@ -189,6 +208,88 @@ results = source.execute_query({
 ```
 
 Requires `OPENAI_API_KEY` — `StructuredFieldExtractor` calls the OpenAI chat API.
+
+---
+
+## Web pages as documents — classification, field extraction, and graph indexing
+
+Treat every ingested page as a structured document: classify its type, extract typed fields, filter by those fields, and traverse the entity graph. Wire up a `classifier`, a `field_extractor`, a `record_store`, and a `graph_source` on the source, and the extra ops (`WEB.FIND`, `WEB.FIND_THEN_SEARCH`, `WEB.GRAPH_NEIGHBORS`, `WEB.GRAPH_QUERY`) become available. Classification and field extraction run **once per page** during ingest; graph indexing runs after all chunks are built.
+
+```python
+from blue_data_doc_source import KeywordClassifier, LLMFieldExtractor, FileRecordStore
+from blue_data_doc_source.source.document.enrichment import BasicEnricher
+from blue_data.source.graph.memory_graph_source import MemoryGraphSource
+
+source = WebDataSource(
+    name="news",
+    embedding_model=OpenAIEmbeddingModel(),
+    vector_source=RedisVectorSource(name="news", host="localhost", port=6379),
+    enricher=BasicEnricher(),
+    classifier=KeywordClassifier(extra_types={
+        "news_article": ["breaking", "reported", "exclusive", "journalist"],
+        "product_page": ["buy now", "add to cart", "in stock", "sku"],
+    }),
+    field_extractor=LLMFieldExtractor(extra_types={
+        "news_article": "Extract: author, publish_date, topics (list), outlet.",
+        "product_page": "Extract: product_name, price, brand, availability.",
+    }),
+    record_store=FileRecordStore("web_records.json"),  # persists across restarts
+    graph_source=MemoryGraphSource("web"),
+)
+
+source.execute_query({"op": "WEB.INGEST", "url": "https://example.com/article"})
+```
+
+### Filter pages by extracted fields
+
+`WEB.FIND` filters the page records written at ingest time — deterministic, no embedding:
+
+```python
+news = source.execute_query({
+    "op": "WEB.FIND",
+    "filter": {"document_type": "news_article", "fields.author": {"contains": "Smith"}},
+})
+```
+
+### Filter, then search within matched pages
+
+`WEB.FIND_THEN_SEARCH` runs the field filter first, then a vector search scoped to the matched pages:
+
+```python
+results = source.execute_query({
+    "op": "WEB.FIND_THEN_SEARCH",
+    "find_filter": {"document_type": "product_page", "fields.brand": "Apple"},
+    "query": "battery life",
+    "k": 5,
+})
+```
+
+### Entity lookup via the graph
+
+```python
+chunks = source.execute_query({
+    "op": "WEB.GRAPH_NEIGHBORS",
+    "entity_name": "Apple Inc",
+    "entity_type": "PROPER_NOUN",
+    "k": 10,
+})
+```
+
+### Coverage reporting
+
+Pass `"coverage": True` to learn how many pages actually had the queried field extracted:
+
+```python
+from blue_data_doc_source import FindResult
+
+result = source.execute_query({
+    "op": "WEB.FIND",
+    "filter": {"fields.author": {"exists": True}},
+    "coverage": True,
+})
+if isinstance(result, FindResult) and result.status == "partial":
+    print(result.warning)  # "X of Y pages are missing the field(s) 'fields.author'."
+```
 
 ---
 

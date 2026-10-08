@@ -17,6 +17,14 @@ BLUE_WEB_REDIS_HOST=localhost \
 uvicorn web_api.main:app --port 8002
 ```
 
+## Testing
+
+```bash
+.venv/bin/pytest platform/web-api/tests/ -v
+```
+
+Tests use FastAPI's `TestClient` with a stubbed `WebDataSource`, so no network, Redis, or API keys are required.
+
 ## Docs
 
 - [REST API reference](../../docs/api.md)
