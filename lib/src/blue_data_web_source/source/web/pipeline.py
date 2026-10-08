@@ -106,6 +106,11 @@ class WebPipeline:
         page_id = "web_" + sha256(fetch_result.final_url.encode()).hexdigest()[:16]
         content_hash = sha256(extract_result.text.strip().encode()).hexdigest()
 
+        # Previous chunk count for this page, if known. Used after re-chunking to
+        # delete stale surplus chunks when a page shrinks. Only a freshness_store
+        # persists this across ingests, so it stays 0 when none is configured.
+        prev_chunk_count = 0
+
         if self._freshness_store is not None:
             stored = self._freshness_store.get(page_id)
             if stored and stored.get("content_hash") == content_hash:
@@ -121,6 +126,8 @@ class WebPipeline:
             if existing and existing.get("url") != fetch_result.final_url:
                 _log.debug("duplicate content: %s (matches %s)", url, existing.get("url"))
                 return []
+
+            prev_chunk_count = stored.get("chunk_count", 0) if stored else 0
 
         # Classification and field extraction — once per page
         page_type: Optional[str] = None
@@ -189,7 +196,26 @@ class WebPipeline:
                     doc=record_dict,
                 )
 
+        # Delete stale surplus chunks. Chunk IDs are positional
+        # ({page_id}_chunk_{idx}); the upsert above overwrites indices
+        # 0..len(records)-1, but when a page shrinks the old higher-indexed
+        # chunks are left orphaned and still searchable. Remove them.
+        # prev_chunk_count is 0 without a freshness_store, so this is a no-op
+        # in that case (see docs: surplus cleanup requires a freshness_store).
+        if self._vector_source is not None and self._embedding_model is not None:
+            for idx in range(len(records), prev_chunk_count):
+                self._vector_source.delete(
+                    collection=effective_collection,
+                    doc_id=f"{page_id}_chunk_{idx:04d}",
+                )
+
         if self._graph_indexer is not None and records:
+            # index_document is a no-op when the Document node already exists, so
+            # a changed page would otherwise keep its stale graph. Delete the
+            # prior document first to refresh it — this also drops section and
+            # chunk nodes removed when a page shrinks. Shared entity nodes are
+            # retained by delete_document. Safe no-op on first ingest.
+            self._graph_indexer.delete_document(page_id)
             self._graph_indexer.index_document(
                 document_id=page_id,
                 file_name=fetch_result.final_url,
