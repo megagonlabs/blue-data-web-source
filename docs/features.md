@@ -438,6 +438,8 @@ Freshness check uses a SHA-256 hash of the page's extracted text — content-lev
 
 When a `freshness_store` is set, cross-URL content deduplication is also active: if two different URLs yield identical extracted text, the second ingest is skipped automatically — no re-embedding, no duplicate chunks in the vector store.
 
+A `freshness_store` also enables stale-chunk cleanup when a page shrinks. Chunk IDs are positional (`{page_id}_chunk_{index}`), so re-ingesting a page that now yields fewer chunks overwrites the lower indices but would otherwise leave the old higher-indexed chunks orphaned and still searchable. Because the freshness store records the previous `chunk_count`, the pipeline knows to delete those surplus chunks on re-ingest. Without a `freshness_store` there is no record of the prior count, so this cleanup does not run — a reason to configure one in production.
+
 ---
 
 ## Search-augmented ingestion

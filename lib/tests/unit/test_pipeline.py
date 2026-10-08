@@ -651,3 +651,102 @@ def test_ingest_many_single_url_behaves_like_ingest():
     pipeline2 = _make_pipeline()
     single = pipeline2.ingest("https://example.com")
     assert len(many) == len(single)
+
+
+# ── Stale surplus-chunk cleanup on re-ingest (#32) ────────────────────────────
+
+def _chunks(n: int):
+    return [(None, f"Chunk {i} unique token {i * 97}. " * 5) for i in range(n)]
+
+
+def _reingest_pipeline(**kwargs):
+    """Pipeline with a mocked vector store + embedding model for chunk-count tests."""
+    pipeline = _make_pipeline(**kwargs)
+    pipeline._embedding_model = MagicMock()
+    pipeline._embedding_model.embed_text.return_value = [0.1, 0.2, 0.3]
+    pipeline._vector_source = MagicMock()
+    pipeline._chunker = MagicMock()
+    return pipeline
+
+
+def _deleted_ids(vector_source) -> list:
+    return [c.kwargs["doc_id"] for c in vector_source.delete.call_args_list]
+
+
+def test_reingest_shrink_deletes_surplus_vector_chunks():
+    store = MemoryFreshnessStore()
+    pipeline = _reingest_pipeline(freshness_store=store, collection="web")
+
+    pipeline._chunker.chunk_with_titles.return_value = _chunks(5)
+    pipeline.ingest("https://example.com")
+    assert store.get(_page_id())["chunk_count"] == 5
+
+    # Page shrinks to 2 chunks; content changed so it is re-ingested
+    pipeline._chunker.chunk_with_titles.return_value = _chunks(2)
+    pipeline._extractor.extract.return_value = _make_extract_result(text="Shrunk content. " * 30)
+    pipeline.ingest("https://example.com")
+
+    pid = _page_id()
+    assert _deleted_ids(pipeline._vector_source) == [
+        f"{pid}_chunk_0002", f"{pid}_chunk_0003", f"{pid}_chunk_0004",
+    ]
+    for call in pipeline._vector_source.delete.call_args_list:
+        assert call.kwargs["collection"] == "web"
+    assert store.get(pid)["chunk_count"] == 2
+
+
+def test_reingest_grow_deletes_nothing():
+    store = MemoryFreshnessStore()
+    pipeline = _reingest_pipeline(freshness_store=store)
+
+    pipeline._chunker.chunk_with_titles.return_value = _chunks(2)
+    pipeline.ingest("https://example.com")
+
+    pipeline._chunker.chunk_with_titles.return_value = _chunks(4)
+    pipeline._extractor.extract.return_value = _make_extract_result(text="Grown content. " * 30)
+    pipeline.ingest("https://example.com")
+
+    pipeline._vector_source.delete.assert_not_called()
+
+
+def test_first_ingest_deletes_nothing():
+    store = MemoryFreshnessStore()
+    pipeline = _reingest_pipeline(freshness_store=store)
+    pipeline._chunker.chunk_with_titles.return_value = _chunks(3)
+    pipeline.ingest("https://example.com")
+    pipeline._vector_source.delete.assert_not_called()
+
+
+def test_reingest_shrink_without_freshness_store_skips_cleanup():
+    # Documented limitation (option a): without a freshness_store the pipeline has
+    # no record of the previous chunk count, so surplus cleanup cannot run.
+    pipeline = _reingest_pipeline()  # no freshness_store
+    pipeline._chunker.chunk_with_titles.return_value = _chunks(5)
+    pipeline.ingest("https://example.com")
+    pipeline._chunker.chunk_with_titles.return_value = _chunks(2)
+    pipeline._extractor.extract.return_value = _make_extract_result(text="Shrunk content. " * 30)
+    pipeline.ingest("https://example.com")
+    pipeline._vector_source.delete.assert_not_called()
+
+
+def test_reingest_refreshes_graph():
+    store = MemoryFreshnessStore()
+    pipeline = _reingest_pipeline(freshness_store=store)
+    pipeline._graph_indexer = MagicMock()
+
+    pipeline._chunker.chunk_with_titles.return_value = _chunks(5)
+    pipeline.ingest("https://example.com")
+
+    pipeline._chunker.chunk_with_titles.return_value = _chunks(2)
+    pipeline._extractor.extract.return_value = _make_extract_result(text="Refreshed content. " * 30)
+    pipeline.ingest("https://example.com")
+
+    pid = _page_id()
+    # delete_document is called before index_document on every ingest so the
+    # graph is rebuilt rather than left stale (index_document is a no-op when
+    # the Document node already exists).
+    assert pipeline._graph_indexer.delete_document.call_count == 2
+    assert all(
+        c.args == (pid,) for c in pipeline._graph_indexer.delete_document.call_args_list
+    )
+    assert pipeline._graph_indexer.index_document.call_count == 2

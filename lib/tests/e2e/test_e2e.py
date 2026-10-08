@@ -423,3 +423,55 @@ def test_e2e_npr_no_nav_fragments_in_search_results(httpx_mock, npr_html):
 
     all_text = " ".join(r.get("text", "") for r in results)
     assert "Related Story" not in all_text
+
+
+@pytest.mark.e2e
+def test_e2e_shrunk_page_removes_stale_chunks(httpx_mock):
+    """#32: when a re-ingested page shrinks, the old surplus chunks must not
+    remain in the vector store (and therefore cannot be returned by search)."""
+    from hashlib import sha256
+
+    from blue_data_web_source.source.web.freshness import MemoryFreshnessStore
+
+    url = "https://shrink.example.com/article"
+    long_html = (
+        "<html><head><title>Long</title></head><body><article><h1>Long Report</h1>"
+        + "".join(
+            f"<p>Section {i} discusses distinct subtopic number {i} with several "
+            f"readable words of body content here.</p>"
+            for i in range(12)
+        )
+        + "</article></body></html>"
+    )
+    short_html = (
+        "<html><head><title>Short</title></head><body><article><h1>Short Note</h1>"
+        "<p>A much shorter replacement article that still contains a reasonable "
+        "amount of readable body text so the extractor keeps it, but only enough "
+        "for a single chunk of output.</p></article></body></html>"
+    )
+    httpx_mock.add_response(url=url, text=long_html, status_code=200,
+                            headers={"content-type": "text/html"})
+    httpx_mock.add_response(url=url, text=short_html, status_code=200,
+                            headers={"content-type": "text/html"})
+
+    vs = MemoryVectorSource()
+    source = WebDataSource(
+        name="test",
+        embedding_model=DummyEmbeddingModel(dim=8),
+        vector_source=vs,
+        default_collection="web",
+        chunk_size=40,
+        overlap=10,
+        freshness_store=MemoryFreshnessStore(),
+    )
+    source.execute_query({"op": "WEB.ENSURE_INDEX", "collection": "web"})
+
+    first = source.execute_query({"op": "WEB.INGEST", "url": url})
+    assert len(first) > 1  # long page produced multiple chunks
+
+    second = source.execute_query({"op": "WEB.INGEST", "url": url})
+    assert 0 < len(second) < len(first)  # page shrank on re-ingest
+
+    page_id = "web_" + sha256(url.encode()).hexdigest()[:16]
+    stored_ids = [k for k in vs._store.get("web", {}) if k.startswith(page_id)]
+    assert len(stored_ids) == len(second)  # no stale surplus chunks left behind
