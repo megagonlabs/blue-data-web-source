@@ -252,4 +252,6 @@ BLUE_DATA_PROFILE=prod blue-web search "climate policy"
 | `BLUE_WEB_MAX_WORKERS` | `10` | Thread pool size for concurrent fetch |
 | `BLUE_WEB_ENRICHER` | `basic` | Enricher: `none`, `basic`, or `llm` |
 | `BLUE_WEB_LLM_MODEL` | `gpt-4o-mini` | OpenAI model used when `BLUE_WEB_ENRICHER=llm` |
+| `BLUE_WEB_FRESHNESS` | `file` | Freshness store: `file`, `memory`, or `none` |
+| `BLUE_WEB_FRESHNESS_PATH` | `~/.blue-web/freshness.json` | Path for the `file` freshness store |
 | `TAVILY_API_KEY` | — | Required for `search-web` |

@@ -24,6 +24,8 @@ Configure via environment variables:
     BLUE_WEB_CHUNK_SIZE       default: 1000
     BLUE_WEB_OVERLAP          default: 150
     BLUE_WEB_TIMEOUT          HTTP timeout in seconds; default: 30
+    BLUE_WEB_FRESHNESS        file | memory | none  (default: file)
+    BLUE_WEB_FRESHNESS_PATH   file store path; default: ~/.blue-web/freshness.json
     TAVILY_API_KEY            required for live search
 """
 from __future__ import annotations
