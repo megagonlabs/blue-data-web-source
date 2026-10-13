@@ -112,7 +112,16 @@ class WebDataSource(DataSource):
         BLUE_WEB_MAX_WORKERS      concurrent fetch threads; default: 10
         BLUE_WEB_ENRICHER         none | basic | llm  (default: basic)
         BLUE_WEB_LLM_MODEL        OpenAI model for llm enricher; default: gpt-4o-mini
+        BLUE_WEB_FRESHNESS        file | memory | none  (default: file)
+        BLUE_WEB_FRESHNESS_PATH   path for the file freshness store;
+                                  default: ~/.blue-web/freshness.json
         TAVILY_API_KEY            required for WEB.SEARCH_WEB (read by TavilySearchProvider on first call)
+
+        A freshness store is configured by default (``file``) so that the CLI,
+        REST API, and MCP server — which all build their source via this
+        factory — skip re-embedding unchanged pages and, crucially, delete
+        stale surplus chunks when a page shrinks on re-ingest. Set
+        ``BLUE_WEB_FRESHNESS=none`` to opt out.
         """
         import os
 
@@ -153,6 +162,35 @@ class WebDataSource(DataSource):
             from blue_data_doc_source.source.document.enrichment import BasicEnricher
             enricher = BasicEnricher()
 
+        # Configure a freshness store by default. Besides skipping re-embedding of
+        # unchanged pages, the store records each page's previous chunk_count,
+        # which the pipeline needs to delete stale surplus chunks when a page
+        # shrinks on re-ingest. Without it the platform surfaces would leak those
+        # chunks (see issue #32 follow-up).
+        freshness_backend = os.getenv("BLUE_WEB_FRESHNESS", "file").lower()
+        freshness_store = None
+        if freshness_backend == "memory":
+            from .freshness import MemoryFreshnessStore
+            freshness_store = MemoryFreshnessStore()
+        elif freshness_backend != "none":  # "file" (default); unknown values fall back to file
+            from .freshness import FileFreshnessStore, MemoryFreshnessStore
+            default_path = os.path.join(os.path.expanduser("~"), ".blue-web", "freshness.json")
+            path = os.getenv("BLUE_WEB_FRESHNESS_PATH", default_path)
+            try:
+                parent = os.path.dirname(path)
+                if parent:
+                    os.makedirs(parent, exist_ok=True)
+                freshness_store = FileFreshnessStore(path)
+            except OSError:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "BLUE_WEB_FRESHNESS=file but %r is not writable; falling back to an "
+                    "in-memory freshness store (no cleanup across separate runs). Set "
+                    "BLUE_WEB_FRESHNESS_PATH to a writable location or BLUE_WEB_FRESHNESS=none.",
+                    path,
+                )
+                freshness_store = MemoryFreshnessStore()
+
         return cls(
             name=name,
             embedding_model=embedding_model,
@@ -163,6 +201,7 @@ class WebDataSource(DataSource):
             default_collection=os.getenv("BLUE_WEB_COLLECTION", "web"),
             timeout=float(os.getenv("BLUE_WEB_TIMEOUT", "30")),
             max_workers=int(os.getenv("BLUE_WEB_MAX_WORKERS", "10")),
+            freshness_store=freshness_store,
         )
 
     def execute_query(self, query, database=None, collection=None, optional_properties=None):

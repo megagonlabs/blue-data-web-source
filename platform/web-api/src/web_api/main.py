@@ -24,6 +24,8 @@ Configure via environment variables:
     BLUE_WEB_MAX_WORKERS        concurrent fetch threads; default: 10
     BLUE_WEB_ENRICHER           none | basic | llm  (default: basic)
     BLUE_WEB_LLM_MODEL          OpenAI model for llm enricher; default: gpt-4o-mini
+    BLUE_WEB_FRESHNESS          file | memory | none  (default: file)
+    BLUE_WEB_FRESHNESS_PATH     file store path; default: ~/.blue-web/freshness.json
     TAVILY_API_KEY              required for /web/search-web (Tavily backend)
 """
 from contextlib import asynccontextmanager

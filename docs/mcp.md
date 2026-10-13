@@ -57,6 +57,8 @@ All configuration is via environment variables:
 | `BLUE_WEB_MAX_WORKERS` | `10` | Thread pool size for concurrent fetch and BFS crawl |
 | `BLUE_WEB_ENRICHER` | `basic` | Enricher to use: `none`, `basic`, or `llm` |
 | `BLUE_WEB_LLM_MODEL` | `gpt-4o-mini` | OpenAI model used when `BLUE_WEB_ENRICHER=llm` |
+| `BLUE_WEB_FRESHNESS` | `file` | Freshness store: `file`, `memory`, or `none` |
+| `BLUE_WEB_FRESHNESS_PATH` | `~/.blue-web/freshness.json` | Path for the `file` freshness store |
 | `TAVILY_API_KEY` | — | Required for `search_web` tool (Tavily backend) |
 
 ## Running with Claude Desktop

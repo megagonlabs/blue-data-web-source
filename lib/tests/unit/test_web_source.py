@@ -291,3 +291,72 @@ def test_extract_import_error_when_doc_source_missing():
                 "url": "https://example.com",
                 "schema": _SCHEMA,
             })
+
+
+# ── from_env() freshness-store configuration (#32 follow-up) ──────────────────
+#
+# The CLI, REST API, and MCP server all build their source via from_env(). Before
+# this change from_env() configured no freshness store, so those surfaces could
+# not delete stale surplus chunks when a page shrank. from_env() now defaults to a
+# persistent FileFreshnessStore.
+
+import os
+
+from blue_data_web_source.source.web.freshness import FileFreshnessStore, MemoryFreshnessStore
+
+
+@pytest.fixture(autouse=True)
+def _clear_freshness_env(monkeypatch):
+    for var in ("BLUE_WEB_FRESHNESS", "BLUE_WEB_FRESHNESS_PATH", "BLUE_WEB_REDIS_HOST"):
+        monkeypatch.delenv(var, raising=False)
+    yield
+
+
+def test_from_env_defaults_to_file_freshness_store(monkeypatch, tmp_path):
+    path = tmp_path / "freshness.json"
+    monkeypatch.setenv("BLUE_WEB_FRESHNESS_PATH", str(path))
+    source = WebDataSource.from_env()
+    store = source._pipeline._freshness_store
+    assert isinstance(store, FileFreshnessStore)
+    assert store._path == str(path)
+
+
+def test_from_env_default_path_under_home(monkeypatch, tmp_path):
+    # No BLUE_WEB_FRESHNESS_PATH → default ~/.blue-web/freshness.json, and the
+    # parent directory is created so the first ingest's write cannot crash.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    source = WebDataSource.from_env()
+    store = source._pipeline._freshness_store
+    assert isinstance(store, FileFreshnessStore)
+    assert store._path == str(tmp_path / ".blue-web" / "freshness.json")
+    assert (tmp_path / ".blue-web").is_dir()
+
+
+def test_from_env_freshness_none_disables(monkeypatch):
+    monkeypatch.setenv("BLUE_WEB_FRESHNESS", "none")
+    source = WebDataSource.from_env()
+    assert source._pipeline._freshness_store is None
+
+
+def test_from_env_freshness_memory(monkeypatch):
+    monkeypatch.setenv("BLUE_WEB_FRESHNESS", "memory")
+    source = WebDataSource.from_env()
+    assert isinstance(source._pipeline._freshness_store, MemoryFreshnessStore)
+
+
+def test_from_env_file_store_creates_missing_parent_dirs(monkeypatch, tmp_path):
+    path = tmp_path / "nested" / "dir" / "freshness.json"
+    monkeypatch.setenv("BLUE_WEB_FRESHNESS_PATH", str(path))
+    source = WebDataSource.from_env()
+    assert isinstance(source._pipeline._freshness_store, FileFreshnessStore)
+    assert path.parent.is_dir()
+
+
+def test_from_env_file_store_falls_back_to_memory_when_unwritable(monkeypatch, tmp_path):
+    # Point at a path whose parent cannot be created (a file is in the way), so
+    # makedirs raises OSError — from_env must not crash; it degrades to memory.
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory")
+    monkeypatch.setenv("BLUE_WEB_FRESHNESS_PATH", str(blocker / "freshness.json"))
+    source = WebDataSource.from_env()
+    assert isinstance(source._pipeline._freshness_store, MemoryFreshnessStore)
