@@ -233,7 +233,7 @@ source = WebDataSource(
 source = WebDataSource(
     name="web",
     embedding_model=OpenAIEmbeddingModel(),
-    vector_source=RedisVectorSource(name="redis", host="localhost", port=6379),
+    vector_source=RedisVectorSource(name="redis", properties={"connection": {"host": "localhost", "port": 6379, "scan_prefix": "web:"}}),
 )
 ```
 
