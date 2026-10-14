@@ -1,13 +1,21 @@
 """
 blue-data-web-source  —  End-to-End Demo
 =========================================
-Demonstrates the full pipeline: ingest web articles → store as embeddings → semantic search.
+Demonstrates the full pipeline: ingest web articles → store as embeddings → semantic search → NL queries.
 
-Works offline — HTTP is intercepted and served from local fixture files.
-No API keys or external services required.
+HTTP is intercepted and served from local fixture files (no network), but this
+demo uses real models: OpenAIEmbeddingModel for embeddings and Claude for the
+natural-language step. It therefore requires the openai and llm extras and both
+API keys:
+
+    pip install -e 'lib/[openai,llm]'
+    export OPENAI_API_KEY=sk-...
+    export ANTHROPIC_API_KEY=sk-ant-...
 
 Usage:
     python examples/demo.py
+
+For a fully offline, no-key demo see examples/backends/memory_quickstart.py.
 """
 from __future__ import annotations
 
