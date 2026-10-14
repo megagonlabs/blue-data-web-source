@@ -187,7 +187,29 @@ def test_ensure_index_calls_create_index():
         index_name="web",
         collection="web",
         dim=16,
+        extra_fields=[{"path": "$.page_id", "name": "page_id", "field_type": "TAG"}],
     )
+
+
+def test_ensure_index_falls_back_when_extra_fields_unsupported():
+    # Backends like MemoryVectorSource don't accept extra_fields; ensure_index
+    # must retry without it rather than raise TypeError.
+    pipeline = _make_pipeline(collection="web")
+    pipeline._embedding_model = MagicMock(dim=8)
+    mock_vs = MagicMock()
+
+    def _create(**kwargs):
+        if "extra_fields" in kwargs:
+            raise TypeError("create_index() got an unexpected keyword argument 'extra_fields'")
+        return "ok"
+
+    mock_vs.create_index.side_effect = _create
+    pipeline._vector_source = mock_vs
+
+    pipeline.ensure_index()  # must not raise
+    # Called twice: once with extra_fields (TypeError), once without.
+    assert mock_vs.create_index.call_count == 2
+    assert "extra_fields" not in mock_vs.create_index.call_args_list[-1].kwargs
 
 
 def test_ensure_index_idempotent_when_index_exists():

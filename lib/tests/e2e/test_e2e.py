@@ -475,3 +475,63 @@ def test_e2e_shrunk_page_removes_stale_chunks(httpx_mock):
     page_id = "web_" + sha256(url.encode()).hexdigest()[:16]
     stored_ids = [k for k in vs._store.get("web", {}) if k.startswith(page_id)]
     assert len(stored_ids) == len(second)  # no stale surplus chunks left behind
+
+
+# ---------------------------------------------------------------------------
+# #40: document-level ops against the REAL doc-source classifier + blue-data
+# backend (no mocks) — catches the three contract drifts the mocked tests missed.
+# ---------------------------------------------------------------------------
+
+_NEWS_URL = "https://news.example.com/story"
+_NEWS_HTML = """<!DOCTYPE html>
+<html lang="en"><head><title>Breaking Story</title></head>
+<body><article><h1>Breaking Story</h1>
+<p>Breaking: our correspondent reported this exclusive story. The journalist
+confirmed the account with multiple sources over several days of reporting.</p>
+<p>Officials responded to the breaking report, and the exclusive details were
+corroborated by a second journalist familiar with the investigation.</p>
+<p>The reported findings add to a growing body of coverage this year.</p>
+</article></body></html>"""
+
+
+@pytest.mark.e2e
+def test_e2e_find_and_find_then_search_with_real_classifier(httpx_mock):
+    from blue_data_doc_source import KeywordClassifier
+
+    from blue_data.source.vector.memory_vector_source import MemoryVectorSource
+
+    httpx_mock.add_response(
+        url=_NEWS_URL, text=_NEWS_HTML, status_code=200,
+        headers={"content-type": "text/html"},
+    )
+    source = WebDataSource(
+        name="test",
+        embedding_model=DummyEmbeddingModel(dim=8),
+        vector_source=MemoryVectorSource(),
+        default_collection="web",
+        classifier=KeywordClassifier(extra_types={
+            "news_article": ["breaking", "reported", "exclusive", "journalist"],
+        }),
+    )
+    source.execute_query({"op": "WEB.ENSURE_INDEX", "collection": "web"})
+
+    # (1) Ingest with a real classifier must not raise (classify() returns a tuple).
+    chunks = source.execute_query({"op": "WEB.INGEST", "url": _NEWS_URL})
+    assert chunks
+
+    # Page record was written and is findable by its classified type.
+    found = source.execute_query({"op": "WEB.FIND", "filter": {"document_type": "news_article"}})
+    assert len(found) == 1
+    assert found[0]["document_type"] == "news_article"
+
+    # (2) FIND_THEN_SEARCH must not raise (knn gets filter_expr, not filters=) and
+    # (3) must return results closest-first (ascending cosine distance).
+    results = source.execute_query({
+        "op": "WEB.FIND_THEN_SEARCH",
+        "find_filter": {"document_type": "news_article"},
+        "query": "breaking exclusive report",
+        "k": 5,
+    })
+    assert results
+    scores = [r["score"] for r in results if r.get("score") is not None]
+    assert scores == sorted(scores)  # ascending = closest first
