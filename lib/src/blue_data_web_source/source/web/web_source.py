@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -16,6 +17,8 @@ if TYPE_CHECKING:
 from .freshness import FreshnessStore
 from .pipeline import WebPipeline
 from .search_provider import WebSearchProvider
+
+_log = logging.getLogger(__name__)
 
 
 class WebDataSource(DataSource):
@@ -314,8 +317,19 @@ class WebDataSource(DataSource):
         k = request.get("k", 5)
         top_k = request.get("top_k", k)
         urls = self._search_provider.search(query, k=k)
-        for url in urls:
-            self._pipeline.ingest(url, collection=collection)
+        # Ingest via ingest_many so a single bad result URL (403/404/timeout/no
+        # content) is skipped instead of aborting the whole op — ingest_many
+        # isolates per-URL failures (and ingests concurrently). A plain loop here
+        # would let one exception propagate and lose every other result.
+        records = self._pipeline.ingest_many(urls, collection=collection)
+        if urls:
+            ingested_urls = {r["url"] for r in records}
+            if len(ingested_urls) < len(urls):
+                _log.info(
+                    "WEB.SEARCH_WEB: ingested chunks from %d of %d result URL(s); "
+                    "the rest failed, were empty, or were unchanged",
+                    len(ingested_urls), len(urls),
+                )
         return self._pipeline.search(query, k=top_k, collection=collection)
 
     def _extract(self, request: Dict[str, Any]) -> Any:
