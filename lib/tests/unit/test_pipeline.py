@@ -190,6 +190,32 @@ def test_ensure_index_calls_create_index():
     )
 
 
+def test_ensure_index_idempotent_when_index_exists():
+    # #41: some backends (Redis) raise "Index already exists" on a second call.
+    # ensure_index must swallow that specific error so it stays idempotent.
+    pipeline = _make_pipeline(collection="web")
+    pipeline._embedding_model = MagicMock(dim=8)
+    mock_vs = MagicMock()
+    mock_vs.create_index.side_effect = Exception("Index already exists")
+    pipeline._vector_source = mock_vs
+
+    pipeline.ensure_index()  # must not raise
+    pipeline.ensure_index()  # safe to call again
+    assert mock_vs.create_index.call_count == 2
+
+
+def test_ensure_index_propagates_other_errors():
+    # A genuine failure (not "already exists") must still surface.
+    pipeline = _make_pipeline(collection="web")
+    pipeline._embedding_model = MagicMock(dim=8)
+    mock_vs = MagicMock()
+    mock_vs.create_index.side_effect = Exception("Connection refused")
+    pipeline._vector_source = mock_vs
+
+    with pytest.raises(Exception, match="Connection refused"):
+        pipeline.ensure_index()
+
+
 def test_ingest_enricher_adds_entities():
     pipeline = _make_pipeline()
     pipeline._enricher = MagicMock()

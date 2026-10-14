@@ -449,14 +449,27 @@ class WebPipeline:
         )
 
     def ensure_index(self, collection: Optional[str] = None) -> None:
-        """Create the vector index for a collection if it does not already exist."""
+        """Create the vector index for a collection if it does not already exist.
+
+        Idempotent: a second call is a no-op. Some backends (e.g. Redis) raise
+        "Index already exists" from ``create_index`` rather than ignoring the
+        duplicate, so that specific error is swallowed here — calling this at
+        every deploy or session start is safe, as the docs promise.
+        """
         if self._vector_source is None or self._embedding_model is None:
             return
-        self._vector_source.create_index(
-            index_name=collection or self._collection,
-            collection=collection or self._collection,
-            dim=self._embedding_model.dim,
-        )
+        name = collection or self._collection
+        try:
+            self._vector_source.create_index(
+                index_name=name,
+                collection=name,
+                dim=self._embedding_model.dim,
+            )
+        except Exception as exc:  # noqa: BLE001 — backends raise varied error types
+            if "already exists" in str(exc).lower():
+                _log.debug("index %r already exists; ensure_index is a no-op", name)
+                return
+            raise
 
     def find_records(
         self,
