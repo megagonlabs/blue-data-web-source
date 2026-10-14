@@ -136,11 +136,14 @@ class WebPipeline:
 
             prev_chunk_count = stored.get("chunk_count", 0) if stored else 0
 
-        # Classification and field extraction — once per page
+        # Classification and field extraction — once per page.
+        # doc-source's DocumentClassifier.classify() returns a (document_type,
+        # confidence) tuple (not a dict), matching how doc-source's own pipeline
+        # unpacks it.
         page_type: Optional[str] = None
         if self._classifier is not None:
-            classification = self._classifier.classify(extract_result.text)
-            page_type = classification.get("document_type")
+            document_type, confidence = self._classifier.classify(extract_result.text)
+            page_type = document_type
             if self._record_store is not None:
                 fields: Dict[str, Any] = {}
                 if self._field_extractor is not None and page_type is not None:
@@ -148,8 +151,8 @@ class WebPipeline:
                 self._record_store.upsert({
                     "document_id": page_id,
                     "document_type": page_type,
-                    "confidence": classification.get("confidence", 0.0),
-                    "classifier": classification.get("classifier", "keyword"),
+                    "confidence": confidence,
+                    "classifier": type(self._classifier).__name__,
                     "url": fetch_result.final_url,
                     "fields": fields,
                 })
@@ -338,9 +341,11 @@ class WebPipeline:
             query: Natural language query string.
             k: Number of results to return.
             collection: Override the instance-level collection for this call only.
-            filters: Optional pre-filter passed to the vector store. Supported
-                keys depend on the backend; ``page_id`` is always stored on web
-                chunks and can be used to scope search to a specific page.
+            filters: Optional field equality pre-filter, e.g. ``{"page_id": ...}``.
+                ``page_id`` is always stored on web chunks and is used to scope
+                search to a specific page. Translated to blue-data's TAG filter
+                expression (``@field:{value}``) and passed to ``knn`` as
+                ``filter_expr``.
 
         Raises:
             ValueError: If ``embedding_model`` or ``vector_source`` is not set.
@@ -357,7 +362,11 @@ class WebPipeline:
             "k": k,
         }
         if filters:
-            kwargs["filters"] = filters
+            # blue-data's knn takes a RediSearch-style filter_expr, not a dict.
+            # Build a TAG filter understood by both Memory and Redis backends.
+            kwargs["filter_expr"] = " ".join(
+                f"@{field}:{{{value}}}" for field, value in filters.items()
+            )
         return self._vector_source.knn(**kwargs)
 
     def find_then_search(
@@ -408,7 +417,9 @@ class WebPipeline:
                     seen.add(chunk_id)
                     all_results.append(chunk)
 
-        all_results.sort(key=lambda c: c.get("score") or 0, reverse=True)
+        # blue-data knn returns cosine distance in "score" (lower = closer), so
+        # sort ascending to put the most similar chunks first.
+        all_results.sort(key=lambda c: c.get("score") if c.get("score") is not None else float("inf"))
         return all_results[:k]
 
     def graph_neighbors(
@@ -476,12 +487,19 @@ class WebPipeline:
         if self._vector_source is None or self._embedding_model is None:
             return
         name = collection or self._collection
+        dim = self._embedding_model.dim
+        # Index page_id as a TAG so FIND_THEN_SEARCH can scope a vector search to
+        # specific pages via a @page_id:{...} filter on Redis. Not every backend
+        # accepts extra_fields (MemoryVectorSource filters chunk dicts directly
+        # and omits the kwarg), so fall back to a plain create_index there.
+        page_id_tag = [{"path": "$.page_id", "name": "page_id", "field_type": "TAG"}]
         try:
-            self._vector_source.create_index(
-                index_name=name,
-                collection=name,
-                dim=self._embedding_model.dim,
-            )
+            try:
+                self._vector_source.create_index(
+                    index_name=name, collection=name, dim=dim, extra_fields=page_id_tag,
+                )
+            except TypeError:
+                self._vector_source.create_index(index_name=name, collection=name, dim=dim)
         except Exception as exc:  # noqa: BLE001 — backends raise varied error types
             if "already exists" in str(exc).lower():
                 _log.debug("index %r already exists; ensure_index is a no-op", name)

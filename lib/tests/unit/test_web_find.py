@@ -119,7 +119,9 @@ class TestEnrichmentWiring:
 class TestClassificationWiring:
     def _mock_classifier(self, page_type="news_article", confidence=0.85):
         c = MagicMock()
-        c.classify.return_value = {"document_type": page_type, "confidence": confidence, "classifier": "keyword"}
+        # doc-source's DocumentClassifier.classify() returns a (type, confidence)
+        # tuple, not a dict.
+        c.classify.return_value = (page_type, confidence)
         return c
 
     def _mock_extractor(self, fields=None):
@@ -397,7 +399,9 @@ class TestFindThenSearch:
         ])
         results = pipeline.find_then_search("AI", find_filter={"document_type": "news_article"}, k=10)
         ids = [r["chunk_id"] for r in results]
-        assert ids == ["c1", "c2", "c3"]   # c2 deduped; sorted by score
+        # score is cosine distance (lower = closer), so results sort ascending;
+        # c2 is deduped to its first occurrence.
+        assert ids == ["c3", "c2", "c1"]
 
     def test_results_capped_at_k(self):
         store = self._store_with(
