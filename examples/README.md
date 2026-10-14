@@ -8,15 +8,15 @@ Runnable demos organized in five categories. Most self-contained demos work with
 
 ```bash
 # install dependencies (from repo root)
-pip install -e /path/to/blue-data
-pip install -e /path/to/blue-data-doc-source
+pip install -e ../blue-data/lib
+pip install -e ../blue-data-doc-source/lib
 pip install -e lib/
 
 # run the minimal quickstart (in-process store, mocked HTTP, no API key)
 python3 examples/backends/memory_quickstart.py
 ```
 
-> Replace `/path/to/blue-data` and `/path/to/blue-data-doc-source` with the paths where you cloned those repos.
+> The installable packages live in each sibling repo's `lib/` subdirectory, so the paths end in `/lib`. Replace `../blue-data` and `../blue-data-doc-source` with the paths where you cloned those repos.
 
 ---
 
@@ -43,12 +43,15 @@ examples/
 
 | Script | What it shows | Deps |
 |---|---|---|
-| `demo.py` | Full pipeline: ingest → embed → search; works offline via local fixtures | `OPENAI_API_KEY` |
+| `demo.py` | Full pipeline: ingest → embed → semantic search → NL queries (HTTP mocked, but calls OpenAI for embeddings and Claude for the NL step) | `pip install -e 'lib/[openai,llm]'`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` |
 | `demo_web.py` | End-to-end demo with optional real URLs; `--embedding openai`, `--nl-query` | OpenAI optional |
 | `ingest_url.py` | Minimal: ingest one URL and print chunks (no vector store required) | live network |
 
 ```bash
-python3 examples/demo.py
+# demo.py calls OpenAI (embeddings) and Claude (NL step), so install those extras and set both keys:
+pip install -e 'lib/[openai,llm]'
+OPENAI_API_KEY=sk-... ANTHROPIC_API_KEY=sk-ant-... python3 examples/demo.py
+
 python3 examples/ingest_url.py https://python.org
 python3 examples/demo_web.py
 OPENAI_API_KEY=sk-... python3 examples/demo_web.py --embedding openai --query "what is this about"

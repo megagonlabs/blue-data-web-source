@@ -9,12 +9,12 @@ Get from a URL to searchable chunks in under five minutes.
 Clone the sibling repos alongside this one, then install all three in editable mode:
 
 ```bash
-pip install -e ../blue-data
-pip install -e ../blue-data-doc-source
+pip install -e ../blue-data/lib
+pip install -e ../blue-data-doc-source/lib
 pip install -e lib/
 ```
 
-> Replace `../blue-data` and `../blue-data-doc-source` with the actual paths where you cloned those repos.
+> The installable packages live in each sibling repo's `lib/` subdirectory, so the paths end in `/lib`. Replace `../blue-data` and `../blue-data-doc-source` with the actual paths where you cloned those repos.
 
 ---
 
@@ -47,6 +47,8 @@ results = source.execute_query({"op": "WEB.SEARCH", "query": "download Python", 
 for r in results:
     print(r["url"], r["text"][:120])
 ```
+
+> **Note:** with `DummyEmbeddingModel` the ranking is **not semantic** — the hash vectors are deterministic but carry no meaning, so changing the query will not surface topically relevant chunks (you will get results, just not meaningfully ranked). This step only exercises the search mechanics. For real relevance — e.g. a "jobs" query returning the careers section — use real embeddings as shown in section 4.
 
 ---
 
