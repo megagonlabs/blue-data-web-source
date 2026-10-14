@@ -360,3 +360,55 @@ def test_from_env_file_store_falls_back_to_memory_when_unwritable(monkeypatch, t
     monkeypatch.setenv("BLUE_WEB_FRESHNESS_PATH", str(blocker / "freshness.json"))
     source = WebDataSource.from_env()
     assert isinstance(source._pipeline._freshness_store, MemoryFreshnessStore)
+
+
+# ── from_env() vector-store configuration (#39) ──────────────────────────────
+#
+# Exercised against the REAL blue-data vector classes (not mocks): from_env()
+# must build a searchable source in both configurations — RedisVectorSource when
+# BLUE_WEB_REDIS_HOST is set (correct constructor), MemoryVectorSource otherwise.
+
+from blue_data.source.vector.memory_vector_source import MemoryVectorSource
+
+
+def test_from_env_without_redis_uses_memory_vector_source(monkeypatch):
+    monkeypatch.setenv("BLUE_WEB_FRESHNESS", "none")  # keep the test off the home dir
+    source = WebDataSource.from_env()
+    assert isinstance(source._pipeline._vector_source, MemoryVectorSource)
+
+
+def test_from_env_without_redis_search_returns_empty_not_error(monkeypatch):
+    # The reported symptom: without Redis, search raised "A vector_source is
+    # required for search". It must now return an empty list on an empty store.
+    monkeypatch.setenv("BLUE_WEB_FRESHNESS", "none")
+    source = WebDataSource.from_env()
+    source.execute_query({"op": "WEB.ENSURE_INDEX", "collection": "web"})
+    results = source.execute_query({"op": "WEB.SEARCH", "query": "hello", "collection": "web"})
+    assert results == []
+
+
+def test_from_env_with_redis_builds_redis_vector_source(monkeypatch):
+    # Real RedisVectorSource; no server needed — the client is lazy and we only
+    # inspect the connection properties. Before the fix this raised TypeError.
+    redis_source = pytest.importorskip(
+        "blue_data.source.vector.redis.redis_vector_source"
+    )
+    monkeypatch.setenv("BLUE_WEB_FRESHNESS", "none")
+    monkeypatch.setenv("BLUE_WEB_REDIS_HOST", "127.0.0.1")
+    monkeypatch.setenv("BLUE_WEB_REDIS_PORT", "6380")
+    source = WebDataSource.from_env()
+    vs = source._pipeline._vector_source
+    assert isinstance(vs, redis_source.RedisVectorSource)
+    conn = vs.properties["connection"]
+    assert conn["host"] == "127.0.0.1"
+    assert conn["port"] == 6380
+    assert conn["scan_prefix"] == "web:"
+
+
+def test_from_env_redis_prefix_override(monkeypatch):
+    pytest.importorskip("blue_data.source.vector.redis.redis_vector_source")
+    monkeypatch.setenv("BLUE_WEB_FRESHNESS", "none")
+    monkeypatch.setenv("BLUE_WEB_REDIS_HOST", "127.0.0.1")
+    monkeypatch.setenv("BLUE_WEB_REDIS_PREFIX", "myapp:")
+    source = WebDataSource.from_env()
+    assert source._pipeline._vector_source.properties["connection"]["scan_prefix"] == "myapp:"

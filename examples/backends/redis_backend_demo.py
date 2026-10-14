@@ -58,8 +58,11 @@ def main():
     try:
         vector_store = RedisVectorSource(
             name="redis-web",
-            host=REDIS_HOST,
-            port=REDIS_PORT,
+            properties={"connection": {
+                "host": REDIS_HOST,
+                "port": REDIS_PORT,
+                "scan_prefix": "web:",
+            }},
         )
     except Exception as exc:
         print(f"  ERROR: cannot connect to Redis at {REDIS_HOST}:{REDIS_PORT}")

@@ -48,7 +48,7 @@ from blue_data.source.vector.redis.redis_vector_source import RedisVectorSource
 source = WebDataSource(
     name="news",
     embedding_model=OpenAIEmbeddingModel(),
-    vector_source=RedisVectorSource(name="news", host="localhost", port=6379),
+    vector_source=RedisVectorSource(name="news", properties={"connection": {"host": "localhost", "port": 6379, "scan_prefix": "web:"}}),
     enricher=BasicEnricher(),
     chunk_size=500,
     overlap=100,
@@ -223,7 +223,7 @@ from blue_data.source.graph.memory_graph_source import MemoryGraphSource
 source = WebDataSource(
     name="news",
     embedding_model=OpenAIEmbeddingModel(),
-    vector_source=RedisVectorSource(name="news", host="localhost", port=6379),
+    vector_source=RedisVectorSource(name="news", properties={"connection": {"host": "localhost", "port": 6379, "scan_prefix": "web:"}}),
     enricher=BasicEnricher(),
     classifier=KeywordClassifier(extra_types={
         "news_article": ["breaking", "reported", "exclusive", "journalist"],

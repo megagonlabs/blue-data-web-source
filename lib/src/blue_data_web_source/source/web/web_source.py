@@ -103,8 +103,9 @@ class WebDataSource(DataSource):
         BLUE_WEB_EMBEDDING        openai | dummy  (default: dummy)
         OPENAI_API_KEY            required when BLUE_WEB_EMBEDDING=openai
         OPENAI_EMBEDDING_MODEL    default: text-embedding-3-small
-        BLUE_WEB_REDIS_HOST       Redis host; omit to run without a vector store
+        BLUE_WEB_REDIS_HOST       Redis host; omit to fall back to MemoryVectorSource
         BLUE_WEB_REDIS_PORT       default: 6379
+        BLUE_WEB_REDIS_PREFIX     Redis key prefix for this source; default: "web:"
         BLUE_WEB_COLLECTION       default collection name (default: web)
         BLUE_WEB_CHUNK_SIZE       default: 1000
         BLUE_WEB_OVERLAP          default: 150
@@ -135,15 +136,25 @@ class WebDataSource(DataSource):
             from blue_data_doc_source.source.document.embeddings.dummy_embedding import DummyEmbeddingModel
             embedding_model = DummyEmbeddingModel()
 
-        vector_source = None
         redis_host = os.getenv("BLUE_WEB_REDIS_HOST")
         if redis_host:
             from blue_data.source.vector.redis.redis_vector_source import RedisVectorSource
+            # blue-data's RedisVectorSource takes connection settings under
+            # properties["connection"], not host=/port= keywords. scan_prefix is
+            # required for its key layout (f"{scan_prefix}{collection}:{doc_id}").
             vector_source = RedisVectorSource(
                 name="redis",
-                host=redis_host,
-                port=int(os.getenv("BLUE_WEB_REDIS_PORT", "6379")),
+                properties={"connection": {
+                    "host": redis_host,
+                    "port": int(os.getenv("BLUE_WEB_REDIS_PORT", "6379")),
+                    "scan_prefix": os.getenv("BLUE_WEB_REDIS_PREFIX", "web:"),
+                }},
             )
+        else:
+            # No Redis configured — fall back to an in-memory vector store so the
+            # source is still searchable (data is lost on restart), as documented.
+            from blue_data.source.vector.memory_vector_source import MemoryVectorSource
+            vector_source = MemoryVectorSource(name="memory")
 
         enricher_backend = os.getenv("BLUE_WEB_ENRICHER", "basic").lower()
         if enricher_backend == "none":
