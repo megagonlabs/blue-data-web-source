@@ -327,3 +327,27 @@ def test_from_env_collection_env(monkeypatch):
     from blue_data_web_source import WebDataSource
     source = WebDataSource.from_env()
     assert source.default_collection == "articles"
+
+
+# ── Real SDK import guard (#44) ───────────────────────────────────────────────
+#
+# The tests above stub the mcp package, so they never exercise the real
+# `from mcp.server.fastmcp import FastMCP`. This test loads server.py against the
+# *installed* SDK (no stub). It is skipped when mcp is not installed, but when it
+# is, it fails loudly if the SDK lacks mcp.server.fastmcp — e.g. mcp 2.x, which
+# renamed FastMCP to MCPServer. That is exactly the breakage the `<2` pin guards
+# against, and why mocked tests alone could not catch it.
+
+def test_server_imports_against_real_mcp_sdk():
+    pytest.importorskip("mcp", reason="mcp SDK not installed")
+    spec = importlib.util.spec_from_file_location("_blue_web_mcp_server_real", _SERVER_PATH)
+    mod = importlib.util.module_from_spec(spec)
+    # Exec with NO stub in sys.modules — raises ModuleNotFoundError on mcp 2.x,
+    # which is the failure we want CI to surface.
+    spec.loader.exec_module(mod)
+    assert mod.mcp is not None
+    for tool in (
+        "ensure_index", "ingest_url", "ingest_urls", "crawl_site",
+        "ingest_feed", "search", "search_web", "extract",
+    ):
+        assert hasattr(mod, tool), f"MCP tool {tool!r} is not defined in server.py"
