@@ -13,6 +13,7 @@ import httpx
 
 from .fetcher import FetchResult, WebFetcher, _DEFAULT_USER_AGENT
 from .pipeline import WebPipeline
+from .politeness import DomainPoliteness
 
 
 class _LinkExtractor(HTMLParser):
@@ -86,9 +87,9 @@ class WebCrawler:
         self._max_workers = max_workers
         self._robots_cache: Dict[str, Optional[RobotFileParser]] = {}
         self._robots_cache_lock = threading.Lock()
-        self._last_fetch_time: Dict[str, float] = {}
-        self._domain_locks: Dict[str, threading.Lock] = {}
-        self._domain_locks_mutex = threading.Lock()
+        # Per-domain politeness: serialize same-host fetches and honour the
+        # (robots-aware) crawl delay. Shared with WebPipeline.ingest_many.
+        self._politeness = DomainPoliteness(delay=crawl_delay, delay_fn=self._effective_delay)
 
     # ------------------------------------------------------------------
     # robots.txt helpers
@@ -129,25 +130,6 @@ class WebCrawler:
         return self._crawl_delay
 
     # ------------------------------------------------------------------
-    # Politeness
-    # ------------------------------------------------------------------
-
-    def _get_domain_lock(self, url: str) -> threading.Lock:
-        domain = urlparse(url).netloc
-        with self._domain_locks_mutex:
-            if domain not in self._domain_locks:
-                self._domain_locks[domain] = threading.Lock()
-            return self._domain_locks[domain]
-
-    def _wait_for_domain(self, url: str) -> None:
-        domain = urlparse(url).netloc
-        delay = self._effective_delay(url)
-        elapsed = time.monotonic() - self._last_fetch_time.get(domain, 0.0)
-        if elapsed < delay:
-            time.sleep(delay - elapsed)
-        self._last_fetch_time[domain] = time.monotonic()
-
-    # ------------------------------------------------------------------
     # Fetch with retry
     # ------------------------------------------------------------------
 
@@ -168,9 +150,7 @@ class WebCrawler:
 
     def _fetch_page(self, url: str) -> Optional[FetchResult]:
         """Fetch a page while holding the per-domain politeness lock."""
-        domain_lock = self._get_domain_lock(url)
-        with domain_lock:
-            self._wait_for_domain(url)
+        with self._politeness.hold(url):
             return self._fetch_with_retry(url)
 
     # ------------------------------------------------------------------

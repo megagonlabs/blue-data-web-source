@@ -69,6 +69,7 @@ class WebDataSource(DataSource):
         record_store: Optional[RecordStore] = None,
         graph_source: Optional["GraphSource"] = None,
         graph_database: str = "web",
+        ingest_delay: float = 0.0,
     ):
         super().__init__(name, properties)
         self._default_collection = default_collection
@@ -91,6 +92,7 @@ class WebDataSource(DataSource):
             record_store=record_store,
             graph_source=graph_source,
             graph_database=graph_database,
+            ingest_delay=ingest_delay,
         )
 
     @property
@@ -114,6 +116,7 @@ class WebDataSource(DataSource):
         BLUE_WEB_OVERLAP          default: 150
         BLUE_WEB_TIMEOUT          HTTP timeout in seconds; default: 30
         BLUE_WEB_MAX_WORKERS      concurrent fetch threads; default: 10
+        BLUE_WEB_INGEST_DELAY     min seconds between same-host batch fetches; default: 0
         BLUE_WEB_ENRICHER         none | basic | llm  (default: basic)
         BLUE_WEB_LLM_MODEL        OpenAI model for llm enricher; default: gpt-4o-mini
         BLUE_WEB_FRESHNESS        file | memory | none  (default: file)
@@ -216,6 +219,7 @@ class WebDataSource(DataSource):
             timeout=float(os.getenv("BLUE_WEB_TIMEOUT", "30")),
             max_workers=int(os.getenv("BLUE_WEB_MAX_WORKERS", "10")),
             freshness_store=freshness_store,
+            ingest_delay=float(os.getenv("BLUE_WEB_INGEST_DELAY", "0")),
         )
 
     def execute_query(self, query, database=None, collection=None, optional_properties=None):
