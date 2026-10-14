@@ -30,6 +30,7 @@ from blue_data_doc_source.source.document.embeddings.openai_embedding import Ope
 
 from blue_data_web_source import WebDataSource
 from blue_data_web_source.source.web.fetcher import FetchResult
+from blue_data_web_source.source.web.search_provider import WebSearchProvider
 
 # ---------------------------------------------------------------------------
 # Article fixtures (served in place of live HTTP)
@@ -140,6 +141,21 @@ def _build_mock_fetcher(url_map: dict[str, str]):
     return mock_fetcher
 
 
+class _OfflineSearchProvider(WebSearchProvider):
+    """Offline stand-in for a live web-search backend (issue #60).
+
+    Step 5 drives the pipeline through ``execute_query_nl``, and the NL parser
+    may classify a plain question as ``WEB.SEARCH_WEB`` (live search), which
+    would fetch arbitrary live URLs the mock fetcher cannot serve — crashing the
+    demo. Returning the already-ingested fixture URLs keeps that path inside the
+    offline fixtures, so the NL step works deterministically whether the parser
+    picks ``search`` or ``search_web``.
+    """
+
+    def search(self, query: str, k: int = 5) -> list[str]:
+        return [_CLIMATE_URL, _NPR_URL][:k]
+
+
 # ---------------------------------------------------------------------------
 # Demo
 # ---------------------------------------------------------------------------
@@ -170,6 +186,7 @@ def main() -> None:
         embedding_model=embedding_model,
         vector_source=vector_store,
         default_collection="news",
+        search_provider=_OfflineSearchProvider(),  # keep WEB.SEARCH_WEB offline (issue #60)
     )
 
     # Inject mock fetcher so no real HTTP occurs
@@ -178,6 +195,7 @@ def main() -> None:
 
     _ok(f"EmbeddingModel  : OpenAIEmbeddingModel (text-embedding-3-small, dim={embedding_model.dim})")
     _ok(f"VectorStore     : MemoryVectorSource (in-process, no Redis needed)")
+    _ok(f"SearchProvider  : offline stub (returns the ingested fixtures)")
     _ok(f"WebDataSource   : ready  (collection='news')")
 
     # ── Step 1: Create index ───────────────────────────────────────────────
