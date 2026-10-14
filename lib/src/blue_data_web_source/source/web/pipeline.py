@@ -20,6 +20,7 @@ from .extractor import WebExtractor
 from .fetcher import FetchResult, WebFetcher
 from .freshness import FreshnessStore
 from .metadata import MetadataExtractor
+from .politeness import DomainPoliteness
 from .record import WebChunkRecord
 
 _log = logging.getLogger(__name__)
@@ -53,6 +54,7 @@ class WebPipeline:
         record_store: Optional[RecordStore] = None,
         graph_source: Optional[Any] = None,
         graph_database: str = "web",
+        ingest_delay: float = 0.0,
     ):
         self._fetcher = WebFetcher(timeout=timeout)
         self._extractor = WebExtractor()
@@ -73,6 +75,11 @@ class WebPipeline:
         if graph_source is not None:
             self._graph_indexer = GraphIndexer(graph_source, database=graph_database)
             self._graph_indexer.ensure_database()
+        # Per-domain politeness for ingest_many: serialize same-host fetches so a
+        # batch of URLs on one host is not hit with max_workers concurrent
+        # requests. Different hosts still run concurrently. ingest_delay=0 (the
+        # default) serializes without an artificial wait.
+        self._politeness = DomainPoliteness(delay=ingest_delay)
 
     def ingest(
         self,
@@ -246,19 +253,29 @@ class WebPipeline:
 
         Uses a thread pool sized to ``max_workers``. Pages that fail to fetch or
         yield no content are silently skipped. Result order is not guaranteed.
+
+        Per-domain politeness applies: URLs on the same host are processed one at
+        a time (optionally spaced by ``ingest_delay``), while URLs on different
+        hosts run concurrently. This prevents a batch of same-host URLs from
+        being hit with ``max_workers`` simultaneous requests.
         """
         if not urls:
             return []
         results: List[Dict[str, Any]] = []
         workers = min(self._max_workers, len(urls))
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(self.ingest, u, collection): u for u in urls}
+            futures = {executor.submit(self._ingest_polite, u, collection): u for u in urls}
             for future in as_completed(futures):
                 try:
                     results.extend(future.result())
                 except Exception:
                     pass
         return results
+
+    def _ingest_polite(self, url: str, collection: Optional[str]) -> List[Dict[str, Any]]:
+        """Ingest one URL while holding its per-host politeness lock."""
+        with self._politeness.hold(url):
+            return self.ingest(url, collection=collection)
 
     def ingest_feed(
         self,

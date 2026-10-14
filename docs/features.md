@@ -243,7 +243,7 @@ source = WebDataSource(
 
 ## Concurrent ingestion
 
-`WEB.INGEST` with a `urls` list and `WEB.CRAWL` both run concurrently using a `ThreadPoolExecutor`. The `max_workers` parameter (default 10, set via `BLUE_WEB_MAX_WORKERS` env var) controls parallelism. The crawler runs BFS level-by-level — all pages at depth N are fetched concurrently before moving to depth N+1, with per-domain politeness locking to avoid hammering a single host.
+`WEB.INGEST` with a `urls` list and `WEB.CRAWL` both run concurrently using a `ThreadPoolExecutor`. The `max_workers` parameter (default 10, set via `BLUE_WEB_MAX_WORKERS` env var) controls parallelism. Both apply **per-domain politeness**: URLs on the same host are fetched one at a time while URLs on different hosts run in parallel, so a batch of same-host URLs is never hit with `max_workers` simultaneous requests. The crawler additionally runs BFS level-by-level — all pages at depth N are fetched (politely) before moving to depth N+1. Set `ingest_delay` (or `BLUE_WEB_INGEST_DELAY`) to also enforce a minimum delay between same-host batch fetches; it defaults to `0` (serialize only, no artificial wait).
 
 ```python
 # Ingest 20 articles concurrently (up to 10 at a time by default)

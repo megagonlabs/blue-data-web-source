@@ -776,3 +776,44 @@ def test_reingest_refreshes_graph():
         c.args == (pid,) for c in pipeline._graph_indexer.delete_document.call_args_list
     )
     assert pipeline._graph_indexer.index_document.call_count == 2
+
+
+# ── Per-domain politeness in ingest_many (#51) ────────────────────────────────
+
+def _concurrency_tracking_pipeline():
+    """Pipeline whose fetcher records peak concurrent in-flight fetches."""
+    import threading
+    import time
+
+    pipeline = _make_pipeline()
+    state = {"inflight": 0, "peak": 0}
+    lock = threading.Lock()
+
+    def _fetch(url):
+        with lock:
+            state["inflight"] += 1
+            state["peak"] = max(state["peak"], state["inflight"])
+        time.sleep(0.05)
+        with lock:
+            state["inflight"] -= 1
+        return _make_fetch_result(url=url)
+
+    pipeline._fetcher.fetch.side_effect = _fetch
+    return pipeline, state
+
+
+def test_ingest_many_serializes_requests_to_one_host():
+    # #51: a batch of same-host URLs must not hit the host with max_workers
+    # concurrent requests — the per-domain lock serializes them (peak == 1).
+    pipeline, state = _concurrency_tracking_pipeline()
+    urls = [f"http://samehost.example/p{i}" for i in range(6)]
+    pipeline.ingest_many(urls)
+    assert state["peak"] == 1
+
+
+def test_ingest_many_runs_different_hosts_concurrently():
+    # Different hosts use different locks, so they still run in parallel.
+    pipeline, state = _concurrency_tracking_pipeline()
+    urls = [f"http://host{i}.example/page" for i in range(6)]
+    pipeline.ingest_many(urls)
+    assert state["peak"] > 1
