@@ -137,6 +137,42 @@ def test_search_web_returns_semantic_results(httpx_mock):
     assert "url" in results[0]
 
 
+def test_search_web_skips_failing_url_and_returns_rest(httpx_mock):
+    # #49: one result URL 403s; the op must skip it and still return chunks from
+    # the good URL rather than letting the exception abort the whole search.
+    good_html = (
+        "<html><head><title>Tidal</title></head><body><article><h1>Tidal</h1><p>"
+        + "tidal energy turbine output renewable power generation " * 30
+        + "</p></article></body></html>"
+    )
+    httpx_mock.add_response(url="https://example.com/forbidden", status_code=403)
+    httpx_mock.add_response(
+        url="https://example.com/good", status_code=200,
+        text=good_html, headers={"content-type": "text/html"},
+    )
+    provider = _mock_provider(["https://example.com/forbidden", "https://example.com/good"])
+    source = _make_source(search_provider=provider)
+    source.execute_query({"op": "WEB.ENSURE_INDEX"})
+
+    results = source.execute_query({"op": "WEB.SEARCH_WEB", "query": "tidal energy", "k": 2})
+
+    assert len(results) > 0
+    assert {r["url"] for r in results} == {"https://example.com/good"}
+
+
+def test_search_web_all_urls_failing_returns_empty(httpx_mock):
+    # Every result URL fails — the op must return an empty list, not raise.
+    httpx_mock.add_response(url="https://example.com/a", status_code=403)
+    httpx_mock.add_response(url="https://example.com/b", status_code=500)
+    provider = _mock_provider(["https://example.com/a", "https://example.com/b"])
+    source = _make_source(search_provider=provider)
+    source.execute_query({"op": "WEB.ENSURE_INDEX"})
+
+    results = source.execute_query({"op": "WEB.SEARCH_WEB", "query": "anything", "k": 2})
+
+    assert results == []
+
+
 def test_search_web_uses_tavily_by_default():
     source = _make_source(search_provider=None)
     assert source._search_provider is None
