@@ -839,3 +839,44 @@ def test_ingest_many_runs_different_hosts_concurrently():
     urls = [f"http://host{i}.example/page" for i in range(6)]
     pipeline.ingest_many(urls)
     assert state["peak"] > 1
+
+
+# ── Redis result flattening (#41) ─────────────────────────────────────────────
+
+def _search_pipeline(knn_rows):
+    pipeline = _make_pipeline()
+    pipeline._embedding_model = MagicMock()
+    pipeline._embedding_model.embed_text.return_value = [0.1, 0.2]
+    pipeline._vector_source = MagicMock()
+    pipeline._vector_source.knn.return_value = knn_rows
+    return pipeline
+
+
+def test_search_flattens_nested_document_rows():
+    # blue-data's Redis backend returns the chunk under "document" (RETURN $);
+    # search() must flatten it so callers get flat chunk fields.
+    pipeline = _search_pipeline([
+        {"id": "web:web_abc_chunk_0000", "score": 0.2,
+         "document": {"chunk_id": "web_abc_chunk_0000", "url": "https://e.com",
+                      "text": "solar battery", "domain": "e.com", "title": "Solar",
+                      "embedding": [0.1, 0.2, 0.3]}},
+    ])
+    r = pipeline.search("solar")[0]
+    assert r["url"] == "https://e.com"
+    assert r["text"] == "solar battery"
+    assert r["chunk_id"] == "web_abc_chunk_0000"
+    assert r["title"] == "Solar"
+    assert r["score"] == 0.2          # top-level score preserved
+    assert "document" not in r         # merged, not nested
+    assert "embedding" not in r        # vector stripped, matching Memory backend
+
+
+def test_search_passes_through_flat_rows():
+    # MemoryVectorSource already returns flat rows — left untouched.
+    pipeline = _search_pipeline([
+        {"id": "x", "score": 0.1, "url": "https://e.com", "text": "t", "chunk_id": "c0"},
+    ])
+    r = pipeline.search("q")[0]
+    assert r["url"] == "https://e.com"
+    assert r["chunk_id"] == "c0"
+    assert r["score"] == 0.1

@@ -367,7 +367,30 @@ class WebPipeline:
             kwargs["filter_expr"] = " ".join(
                 f"@{field}:{{{value}}}" for field, value in filters.items()
             )
-        return self._vector_source.knn(**kwargs)
+        return [self._flatten_result(row) for row in self._vector_source.knn(**kwargs)]
+
+    @staticmethod
+    def _flatten_result(row: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalise a knn result row to a flat chunk dict.
+
+        blue-data's Redis backend returns the stored chunk under a ``document``
+        key (it issues ``RETURN $`` when no return_fields are given), while
+        ``MemoryVectorSource`` returns the chunk fields flat. Merge the document
+        up so callers always get flat fields (``url``, ``text``, ``chunk_id``,
+        ``page_id``, ``title`` …) alongside the top-level ``id``/``score``.
+        """
+        doc = row.get("document")
+        if not isinstance(doc, dict):
+            return row
+        flat = dict(doc)
+        # Drop the stored embedding vector — Redis' RETURN $ includes it, but
+        # MemoryVectorSource omits it from results; keep the two backends aligned
+        # and results lean.
+        flat.pop("embedding", None)
+        for key, value in row.items():
+            if key != "document":
+                flat[key] = value
+        return flat
 
     def find_then_search(
         self,
