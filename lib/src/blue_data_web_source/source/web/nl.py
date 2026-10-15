@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+import json
+from typing import Any, Dict, Optional, Tuple
 
 
 class NLQueryParser:
@@ -194,6 +195,58 @@ class NLQueryParser:
                 return self._to_op(block.name, block.input)
 
         raise ValueError(f"Model did not return a tool call for request: {text!r}")
+
+    def parse_with_llm_fn(self, text: str, llm_fn) -> Dict[str, Any]:
+        """Return a WebDataSource op dict using a generic ``(prompt) -> str`` llm_fn.
+
+        Used when a caller (e.g. ``DataRegistry.execute_query_nl``) supplies a
+        shared LLM callable rather than relying on this parser's own Anthropic
+        tool-use client. The model is asked to emit a single JSON object naming
+        one of the known tools; it is then mapped to a ``WEB.*`` op dict.
+        """
+        raw = llm_fn(self._build_llm_fn_prompt(text))
+        name, args = self._extract_tool_call(raw)
+        return self._to_op(name, args)
+
+    def _build_llm_fn_prompt(self, text: str) -> str:
+        lines = [
+            "Translate the user request into exactly one tool call.",
+            "Available tools:",
+        ]
+        for tool in self._TOOLS:
+            schema = tool["input_schema"]
+            required = set(schema.get("required", []))
+            params = ", ".join(
+                f"{key}{'*' if key in required else ''}: {spec.get('description', '')}"
+                for key, spec in schema.get("properties", {}).items()
+            )
+            lines.append(f"- {tool['name']}: {tool['description']} (params — {params})")
+        lines += [
+            "",
+            'Respond with ONLY a JSON object of the form '
+            '{"name": "<tool>", "input": {<arguments>}} and nothing else '
+            "(* marks required arguments).",
+            "",
+            f"Request: {text}",
+        ]
+        return "\n".join(lines)
+
+    def _extract_tool_call(self, raw: str) -> Tuple[str, Dict[str, Any]]:
+        """Parse the first JSON object out of *raw* (tolerating prose/code fences)."""
+        if not isinstance(raw, str):
+            raise ValueError(f"llm_fn must return a string, got {type(raw).__name__}")
+        start = raw.find("{")
+        if start == -1:
+            raise ValueError(f"llm_fn did not return a JSON tool call: {raw!r}")
+        try:
+            data, _ = json.JSONDecoder().raw_decode(raw[start:])
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"llm_fn did not return valid JSON: {raw!r}") from exc
+        name = data.get("name")
+        if not name:
+            raise ValueError(f"llm_fn response missing a tool 'name': {raw!r}")
+        args = data.get("input") or {}
+        return name, args
 
     def _to_op(self, tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
         if tool_name == "ingest_url":
