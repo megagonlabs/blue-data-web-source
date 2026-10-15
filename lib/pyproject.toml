@@ -7,10 +7,10 @@ name = "blue-data-web-source"
 version = "0.1.0"
 description = "Web and feed data source for Blue Data Intelligence"
 authors = [
-    {name = "Jalal Mahmud", email = "jalal@megagon.ai"},
+    {name = "Jalal Mahmud", email = "contact_oss@megagon.ai"},
 ]
 maintainers = [
-    {name = "Jalal Mahmud", email = "jalal@megagon.ai"},
+    {name = "Jalal Mahmud", email = "contact_oss@megagon.ai"},
 ]
 requires-python = ">=3.10"
 dependencies = [
