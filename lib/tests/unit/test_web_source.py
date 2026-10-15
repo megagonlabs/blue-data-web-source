@@ -412,3 +412,17 @@ def test_from_env_redis_prefix_override(monkeypatch):
     monkeypatch.setenv("BLUE_WEB_REDIS_PREFIX", "myapp:")
     source = WebDataSource.from_env()
     assert source._pipeline._vector_source.properties["connection"]["scan_prefix"] == "myapp:"
+
+
+def test_ensure_index_returns_list_of_dict():
+    # #50: execute_query must return list[dict]; ENSURE_INDEX used to return None.
+    source = _make_source()
+    result = source.execute_query({"op": "WEB.ENSURE_INDEX", "collection": "web"})
+    assert result == [{"status": "ok", "collection": "web"}]
+
+
+def test_ensure_index_default_collection_in_result():
+    source = _make_source()
+    result = source.execute_query({"op": "WEB.ENSURE_INDEX"})
+    assert isinstance(result, list) and result[0]["status"] == "ok"
+    assert result[0]["collection"] == source.default_collection

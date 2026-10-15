@@ -37,6 +37,15 @@ class WebDataSource(DataSource):
     - ``WEB.ENSURE_INDEX`` — create the vector index for a collection
     - ``WEB.EXTRACT`` — fetch a URL and extract structured fields via a caller-supplied JSON Schema
 
+    Return types: ``execute_query`` returns ``list[dict]`` for every op, with two
+    documented, opt-in exceptions that the generic (e.g. ``DataRegistry``) path
+    never triggers:
+
+    - ``WEB.EXTRACT`` with a single ``url`` returns one ``dict`` of fields (a
+      ``urls`` batch returns ``list[dict]``);
+    - ``WEB.FIND`` with ``coverage=True`` returns a :class:`FindResult` carrying a
+      :class:`CoverageReport` (plain ``WEB.FIND`` returns ``list[dict]``).
+
     Example::
 
         source = WebDataSource(
@@ -372,9 +381,12 @@ class WebDataSource(DataSource):
             results.append(fields)
         return results
 
-    def _ensure_index(self, request: Dict[str, Any], collection_override=None) -> None:
+    def _ensure_index(self, request: Dict[str, Any], collection_override=None) -> List[Dict[str, Any]]:
         collection = collection_override or request.get("collection")
         self._pipeline.ensure_index(collection=collection)
+        # Return a list[dict] rather than None so the op honours the DataSource
+        # execute_query -> list[dict] contract (#50).
+        return [{"status": "ok", "collection": collection or self._default_collection}]
 
     def _find(self, request: Dict[str, Any]):
         """Implement WEB.FIND — filter web page records by extracted field values.
@@ -454,18 +466,55 @@ class WebDataSource(DataSource):
             k=request.get("k"),
         )
 
-    def execute_query_nl(self, text: str, collection=None):
-        """Parse *text* as a natural language query and execute it.
+    def translate_nl_to_native_query(self, query: str, schema=None, llm_fn=None):
+        """Translate a natural-language request into a ``WEB.*`` op dict.
 
-        Uses Claude tool use to classify intent and extract parameters, then
-        dispatches to ``execute_query``. Requires the ``anthropic`` package::
+        This is the blue-data ``DataSource`` extension hook. Overriding it (rather
+        than ``execute_query_nl``) means NL queries go through the base
+        ``execute_query_nl(query, database, collection, schema, llm_fn,
+        optional_properties, read_only)`` — the exact signature
+        ``DataRegistry.execute_query_nl`` calls (#50).
 
-            pip install 'blue-data-web-source[nl]'
-
-        Override the Claude model via ``nl_model`` in the constructor.
+        Uses ``llm_fn`` (a ``(prompt) -> str`` callable, e.g. supplied by the
+        registry) when given; otherwise falls back to the built-in Claude
+        tool-use parser, which needs the ``anthropic`` extra and
+        ``ANTHROPIC_API_KEY``. Override the Claude model via ``nl_model`` in the
+        constructor.
         """
         from .nl import NLQueryParser
         if self._nl_parser is None:
             self._nl_parser = NLQueryParser(model=self._nl_model)
-        query = self._nl_parser.parse(text)
-        return self.execute_query(query, collection=collection)
+        if llm_fn is not None:
+            return self._nl_parser.parse_with_llm_fn(query, llm_fn)
+        return self._nl_parser.parse(query)
+
+    def execute_query_nl(
+        self,
+        query: str,
+        database=None,
+        collection=None,
+        schema=None,
+        llm_fn=None,
+        optional_properties=None,
+        read_only: bool = True,
+    ):
+        """Translate a natural-language *query* and execute it.
+
+        Matches blue-data's ``DataSource.execute_query_nl`` signature, which is
+        exactly how ``DataRegistry.execute_query_nl`` invokes a source (#50). The
+        translation goes through :meth:`translate_nl_to_native_query`, which uses
+        ``llm_fn`` when supplied and otherwise the built-in Claude tool-use parser.
+
+        Defined explicitly (rather than relying on the inherited base method) so
+        it works regardless of the installed blue-data version. Returns the
+        op's result — ``list[dict]`` for the ordinary ops.
+        """
+        native_query = self.translate_nl_to_native_query(query, schema=schema, llm_fn=llm_fn)
+        if not native_query:
+            return []
+        props = dict(optional_properties or {})
+        if read_only:
+            props.pop("commit", None)
+        return self.execute_query(
+            native_query, database=database, collection=collection, optional_properties=props,
+        )

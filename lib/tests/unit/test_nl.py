@@ -319,3 +319,59 @@ def test_execute_query_nl_reuses_parser_across_calls():
     source.execute_query_nl("second call")
 
     assert mock_parser.parse.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# #50: NLQueryParser.parse_with_llm_fn + base-signature execute_query_nl
+# ---------------------------------------------------------------------------
+
+class TestParseWithLlmFn:
+    def test_maps_json_tool_call_to_op(self):
+        p = NLQueryParser()
+        op = p.parse_with_llm_fn(
+            "find tides",
+            lambda prompt: '{"name": "search", "input": {"query": "tides", "k": 3}}',
+        )
+        assert op == {"op": "WEB.SEARCH", "query": "tides", "k": 3}
+
+    def test_tolerates_prose_and_code_fences(self):
+        p = NLQueryParser()
+        op = p.parse_with_llm_fn(
+            "ingest it",
+            lambda prompt: 'Sure:\n```json\n{"name": "ingest_url", "input": {"url": "https://e.com"}}\n```',
+        )
+        assert op == {"op": "WEB.INGEST", "url": "https://e.com"}
+
+    def test_prompt_lists_the_tools(self):
+        p = NLQueryParser()
+        captured = {}
+
+        def llm_fn(prompt):
+            captured["prompt"] = prompt
+            return '{"name": "ensure_index", "input": {}}'
+
+        p.parse_with_llm_fn("make the index", llm_fn)
+        assert "ingest_url" in captured["prompt"]
+        assert "search_web" in captured["prompt"]
+
+    def test_raises_on_non_json_response(self):
+        p = NLQueryParser()
+        with pytest.raises(ValueError):
+            p.parse_with_llm_fn("x", lambda prompt: "no json here")
+
+
+def test_execute_query_nl_registry_signature_with_llm_fn():
+    # The exact keyword call DataRegistry.execute_query_nl makes — must not
+    # TypeError, and must route through llm_fn (no Anthropic client needed).
+    source = _make_source()
+    source._pipeline.search.return_value = [{"chunk_id": "c1"}]
+    result = source.execute_query_nl(
+        query="search for tides",
+        database=None,
+        collection="web",
+        schema=None,
+        llm_fn=lambda prompt: '{"name": "search", "input": {"query": "tides", "k": 2}}',
+        optional_properties={},
+    )
+    source._pipeline.search.assert_called_once_with("tides", k=2, collection="web")
+    assert result == [{"chunk_id": "c1"}]
