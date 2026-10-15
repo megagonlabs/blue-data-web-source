@@ -13,15 +13,21 @@
 
 ## Install
 
-blue-data-web-source depends on blue-data and blue-data-doc-source. Install all three in dependency order:
+blue-data-web-source depends on blue-data and blue-data-doc-source. The
+installable package in each sibling repo lives in its `lib/` subdirectory (the
+repo root is not a Python project), so the paths end in `/lib`. Install all
+three in dependency order — the siblings first, so `lib`'s requirements are
+already satisfied:
 
 ```bash
-pip install -e /path/to/blue-data
-pip install -e /path/to/blue-data-doc-source
-pip install -e /path/to/blue-data-web-source/lib
+pip install -e ../blue-data/lib
+pip install -e ../blue-data-doc-source/lib
+pip install -e lib
 ```
 
-> Replace `/path/to/blue-data` and `/path/to/blue-data-doc-source` with the paths where you cloned those repos.
+> Run these from the `blue-data-web-source` repo root, with `blue-data` and
+> `blue-data-doc-source` cloned beside it. Replace `../blue-data` and
+> `../blue-data-doc-source` with the actual paths if your layout differs.
 
 ### Platform adapters
 
@@ -47,7 +53,7 @@ bash platform/web-api/scripts/install.sh         # REST API + library
 bash platform/web-mcp/scripts/install.sh         # MCP server + library
 ```
 
-The scripts resolve `../blue-data` and `../blue-data-doc-source` automatically from the directory layout.
+The scripts resolve `../blue-data/lib` and `../blue-data-doc-source/lib` automatically from the directory layout and install them before the library.
 
 ### Optional extras
 
