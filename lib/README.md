@@ -5,12 +5,13 @@ Core Python library. Provides `WebDataSource`, `WebPipeline`, and all supporting
 ## Install
 
 ```bash
-pip install -e /path/to/blue-data
-pip install -e /path/to/blue-data-doc-source
-pip install -e .
+# from the blue-data-web-source repo root, siblings cloned beside it:
+pip install -e ../blue-data/lib
+pip install -e ../blue-data-doc-source/lib
+pip install -e lib
 ```
 
-> Replace `/path/to/blue-data` and `/path/to/blue-data-doc-source` with the paths where you cloned those repos.
+> The sibling packages live in each repo's `lib/` subdirectory, so the paths end in `/lib`. Install the siblings first so `lib`'s requirements are already satisfied. Replace `../blue-data` and `../blue-data-doc-source` with the actual paths if your layout differs.
 
 Optional extras: `[openai]`, `[redis]`, `[llm]`, `[feed]`, `[all]`.
 
