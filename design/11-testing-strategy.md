@@ -153,7 +153,12 @@ Two fixture categories:
 - Nav-fragment lines in article body
 - Pages that trafilatura returns `None` for
 
-**Saved real HTML** — `data/fixtures/npr_article.html` is a real news article committed to the repo. Integration tests assert on the exact title, date, domain, content keywords, and absence of nav fragments from the known fixture.
+**Saved real HTML** — `data/fixtures/npr_article.html` is a real news article. It is
+third-party content, so it is **not** committed to the repo (see the README
+"Disclosures" section): it is git-ignored and downloaded on demand with
+`python scripts/fetch_fixtures.py`. Integration tests assert on the exact title, date,
+domain, content keywords, and absence of nav fragments from the known fixture, and
+`pytest.skip` themselves when the fixture has not been fetched.
 
 ```python
 @pytest.mark.integration
@@ -170,7 +175,11 @@ def test_npr_article_extraction(httpx_mock):
     assert not any("Read more:" in r["text"] for r in records)
 ```
 
-When adding a new fixture: fetch the page once with `httpx`, save the HTML under `data/fixtures/`, commit it, then write fixture-based tests against it.
+When adding a new fixture: if the page is third-party content, add it to the
+`_FIXTURES` table in `scripts/fetch_fixtures.py` and the README "Disclosures > Datasets"
+table, git-ignore the saved file, and make the test `pytest.skip` when it is absent —
+do **not** commit the HTML. Only synthetic, first-party HTML should be committed under
+`data/fixtures/`.
 
 ---
 

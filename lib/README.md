@@ -41,7 +41,7 @@ Optional extras: `[openai]`, `[redis]`, `[llm]`, `[feed]`, `[all]`.
 Integration tests use two kinds of fixtures:
 
 - **Synthetic HTML** — hand-crafted article HTML covering known extraction behaviour
-- **Saved real HTML** — `data/fixtures/npr_article.html` is a real news article committed to the repo; tests assert on exact title, date, domain, and absence of nav fragments
+- **Saved real HTML** — `data/fixtures/npr_article.html` is a real news article. As third-party content it is not committed to the repo (see the README "Disclosures"); fetch it with `python scripts/fetch_fixtures.py`. Tests assert on exact title, date, domain, and absence of nav fragments, and skip when the fixture is absent
 
 ## Docs
 
