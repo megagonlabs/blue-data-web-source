@@ -17,7 +17,7 @@ dependencies = [
     "blue-data-web-source>=0.1.0",
     # Pin to the v1 SDK: server.py uses mcp.server.fastmcp.FastMCP, which mcp 2.x
     # removed (renamed to mcp.server.mcpserver.MCPServer). See issue #44.
-    "mcp>=1.0.0,<2",
+    "mcp>=1.28.1,<2",
 ]
 
 [project.optional-dependencies]
