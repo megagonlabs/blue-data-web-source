@@ -72,7 +72,14 @@ _BOILERPLATE_HTML = """<!DOCTYPE html>
 
 @pytest.fixture
 def npr_html() -> str:
-    return (_FIXTURES_DIR / "npr_article.html").read_text(encoding="utf-8")
+    path = _FIXTURES_DIR / "npr_article.html"
+    if not path.exists():
+        pytest.skip(
+            "NPR fixture not present — run `python scripts/fetch_fixtures.py` to "
+            "download it. Third-party content is not committed to the repo "
+            "(see README 'Disclosures')."
+        )
+    return path.read_text(encoding="utf-8")
 
 
 def _make_source(collection: str = "web", dim: int = 8) -> WebDataSource:

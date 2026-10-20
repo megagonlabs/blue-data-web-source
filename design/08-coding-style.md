@@ -136,4 +136,6 @@ Each module follows this order:
 - HTTP is mocked via `pytest-httpx` (`httpx_mock` fixture) — never makes real network calls in unit or integration tests.
 - `WebFetcher` is patched with `MagicMock` in pure unit tests; real HTML fixtures in `data/fixtures/` are used for integration tests via `pytest-httpx`.
 - Never mock internal collaborators — use real in-process doubles (`MemoryVectorSource`, `DummyEmbeddingModel`).
-- New HTML fixtures: fetch the page once, save as `data/fixtures/{name}.html`, commit, then write fixture-based tests.
+- New HTML fixtures: commit only synthetic, first-party HTML. Third-party pages are not
+  redistributed — register them in `scripts/fetch_fixtures.py` and the README
+  "Disclosures" table, git-ignore the saved file, and `pytest.skip` the test when absent.

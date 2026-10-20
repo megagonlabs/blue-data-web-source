@@ -18,6 +18,10 @@ htmlcov/
 # Claude Code
 CLAUDE.md
 
+# Third-party test fixtures — downloaded on demand via scripts/fetch_fixtures.py,
+# not redistributed in the repo (see README "Disclosures").
+data/fixtures/npr_article.html
+
 # local files
 presentation.md
 .env

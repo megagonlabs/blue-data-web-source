@@ -23,7 +23,14 @@ _FIXTURES_DIR = Path(__file__).parent.parent.parent.parent / "data" / "fixtures"
 
 @pytest.fixture
 def npr_article_html() -> str:
-    return (_FIXTURES_DIR / "npr_article.html").read_text(encoding="utf-8")
+    path = _FIXTURES_DIR / "npr_article.html"
+    if not path.exists():
+        pytest.skip(
+            "NPR fixture not present — run `python scripts/fetch_fixtures.py` to "
+            "download it. Third-party content is not committed to the repo "
+            "(see README 'Disclosures')."
+        )
+    return path.read_text(encoding="utf-8")
 
 
 _NPR_URL = "https://text.npr.org/nx-s1-5884537"

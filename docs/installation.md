@@ -123,6 +123,6 @@ pytest lib/tests/ -v
 
 Integration tests cover two categories:
 - **Synthetic tests** — hand-crafted HTML, validate extraction, stripping, deduplication, and HTTP error handling
-- **Fixture tests** — load saved HTML from `data/fixtures/` and assert on title, date, domain, content keywords, and absence of nav fragments
+- **Fixture tests** — load saved HTML from `data/fixtures/` and assert on title, date, domain, content keywords, and absence of nav fragments. Third-party fixtures are not committed to the repo; fetch them first with `python scripts/fetch_fixtures.py` (tests skip themselves when a fixture is absent).
 
-When adding a new fixture: fetch the page once with httpx, save the HTML under `data/fixtures/`, commit it, then write fixture-based tests against it using `pytest-httpx`.
+When adding a new fixture: commit only synthetic, first-party HTML. For third-party pages, register the URL in `scripts/fetch_fixtures.py` and the README "Disclosures" table, git-ignore the saved file, and `pytest.skip` the test when it is absent — do not commit the HTML.
