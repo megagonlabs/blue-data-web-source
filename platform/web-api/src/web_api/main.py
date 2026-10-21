@@ -27,10 +27,24 @@ Configure via environment variables:
     BLUE_WEB_FRESHNESS          file | memory | none  (default: file)
     BLUE_WEB_FRESHNESS_PATH     file store path; default: ~/.blue-web/freshness.json
     TAVILY_API_KEY              required for /web/search-web (Tavily backend)
+
+Server policy (via blue_data.server, cross-repo XR-08):
+
+    BLUE_WEB_API_HOST           bind host; default 127.0.0.1 (loopback only)
+    BLUE_WEB_API_PORT           bind port; default 8002 (family port map)
+    BLUE_WEB_API_KEY            API key required on every data route (sent as
+                                X-API-Key or Authorization: Bearer). Without it,
+                                data routes return 401.
+    BLUE_WEB_API_AUTH_DISABLED  set truthy (1/true/yes) to run with no API key
+
+State-changing routes (POST/PUT/PATCH/DELETE) require an application/json body;
+form, multipart, or text bodies are refused with 415 (CSRF protection). The
+health and docs paths (/web/health, /docs, /redoc, /openapi.json) stay open.
 """
 from contextlib import asynccontextmanager
 
 import uvicorn
+from blue_data.server import DEFAULT_OPEN_PATHS, resolve_bind, security_dependencies
 from fastapi import FastAPI
 
 from web_api.routers import web
@@ -43,18 +57,25 @@ async def lifespan(app: FastAPI):
     yield
 
 
+# /web/health is the service health probe; the default open paths cover the
+# unprefixed docs routes. Everything else requires an API key and a JSON body.
+_OPEN_PATHS = DEFAULT_OPEN_PATHS | {"/web/health"}
+
 app = FastAPI(
     title="blue-data-web-source API",
     description="REST API for ingesting, crawling, extracting, and searching web content.",
     version="0.1.0",
     lifespan=lifespan,
+    dependencies=security_dependencies("BLUE_WEB_API", open_paths=_OPEN_PATHS),
 )
 
 app.include_router(web.router)
 
 
 def run():
-    uvicorn.run("web_api.main:app", host="0.0.0.0", port=8002, reload=False)
+    # Loopback by default; host/port from BLUE_WEB_API_HOST / BLUE_WEB_API_PORT.
+    host, port = resolve_bind("BLUE_WEB_API", default_port=8002)
+    uvicorn.run("web_api.main:app", host=host, port=port, reload=False)
 
 
 if __name__ == "__main__":
