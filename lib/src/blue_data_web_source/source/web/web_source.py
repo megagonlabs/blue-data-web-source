@@ -81,6 +81,35 @@ class WebDataSource(DataSource):
         ingest_delay: float = 0.0,
     ):
         super().__init__(name, properties)
+        props = self.properties
+
+        # DataSource contract §4 (design/14): a source must be reconstructible from
+        # (name, properties) alone — the registry's connect_source rebuilds it from
+        # the stored record, with no Python-object collaborators to hand in. So the
+        # embedding model, vector store, enricher and freshness store are built from
+        # ``properties`` here. A collaborator passed explicitly still wins (direct,
+        # in-process use); otherwise it is built from the matching properties key when
+        # present; otherwise it stays unset (the historical no-properties default, so
+        # existing callers are unaffected). Scalars take the properties value when set,
+        # else the keyword default — so a rebuilt source reproduces the same config.
+        default_collection = props.get("collection", default_collection)
+        chunk_size = props.get("chunk_size", chunk_size)
+        overlap = props.get("overlap", overlap)
+        timeout = props.get("timeout", timeout)
+        max_workers = props.get("max_workers", max_workers)
+        ingest_delay = props.get("ingest_delay", ingest_delay)
+        nl_model = props.get("nl_model", nl_model)
+        graph_database = props.get("graph_database", graph_database)
+
+        if embedding_model is None:
+            embedding_model = self._build_embedding(props)
+        if vector_source is None:
+            vector_source = self._build_vector_source(props)
+        if enricher is None:
+            enricher = self._build_enricher(props)
+        if freshness_store is None:
+            freshness_store = self._build_freshness_store(props)
+
         self._default_collection = default_collection
         self._nl_model = nl_model
         self._nl_parser = None
@@ -103,6 +132,100 @@ class WebDataSource(DataSource):
             graph_database=graph_database,
             ingest_delay=ingest_delay,
         )
+
+    # ---------------------------------------------------------------- builders
+    # Build collaborators from a ``properties`` dict so the source is
+    # reconstructible from its stored record (DataSource contract §4). Each
+    # returns ``None`` when its backend key is absent, preserving the historical
+    # "no properties → no collaborator" constructor default.
+
+    @staticmethod
+    def _build_embedding(props: Dict[str, Any]) -> Optional[EmbeddingModel]:
+        backend = props.get("embedding")
+        if not backend:
+            return None
+        backend = str(backend).lower()
+        if backend == "openai":
+            from blue_data_doc_source.source.document.embeddings.openai_embedding import OpenAIEmbeddingModel
+            return OpenAIEmbeddingModel(
+                model=props.get("openai_embedding_model", "text-embedding-3-small")
+            )
+        if backend == "dummy":
+            from blue_data_doc_source.source.document.embeddings.dummy_embedding import DummyEmbeddingModel
+            return DummyEmbeddingModel()
+        raise ValueError(f"Unknown embedding backend {backend!r} (expected 'openai' or 'dummy')")
+
+    @staticmethod
+    def _build_vector_source(props: Dict[str, Any]) -> Optional[VectorSource]:
+        backend = props.get("vector")
+        if not backend:
+            return None
+        backend = str(backend).lower()
+        if backend == "memory":
+            from blue_data.source.vector.memory_vector_source import MemoryVectorSource
+            return MemoryVectorSource(name="memory")
+        if backend == "redis":
+            from blue_data.source.vector.redis.redis_vector_source import RedisVectorSource
+            conn = dict(props.get("connection", {}))
+            return RedisVectorSource(name="redis", properties={"connection": {
+                "host": conn.get("host", "localhost"),
+                "port": int(conn.get("port", 6379)),
+                "scan_prefix": conn.get("scan_prefix", "web:"),
+            }})
+        raise ValueError(f"Unknown vector backend {backend!r} (expected 'memory' or 'redis')")
+
+    @staticmethod
+    def _build_enricher(props: Dict[str, Any]) -> Optional[Enricher]:
+        backend = props.get("enricher")
+        if not backend:
+            return None
+        backend = str(backend).lower()
+        if backend == "none":
+            return None
+        if backend == "basic":
+            from blue_data_doc_source.source.document.enrichment import BasicEnricher
+            return BasicEnricher()
+        if backend == "llm":
+            from blue_data_doc_source.source.document.enrichment import BasicEnricher, LLMEnricher
+            llm_model = props.get("llm_model", "gpt-4o-mini")
+
+            def _llm_fn(prompt: str) -> str:
+                from openai import OpenAI
+                return OpenAI().chat.completions.create(
+                    model=llm_model,
+                    messages=[{"role": "user", "content": prompt}],
+                ).choices[0].message.content or ""
+
+            return LLMEnricher(llm_fn=_llm_fn, fallback=BasicEnricher())
+        raise ValueError(f"Unknown enricher backend {backend!r} (expected 'none', 'basic' or 'llm')")
+
+    @staticmethod
+    def _build_freshness_store(props: Dict[str, Any]) -> Optional[FreshnessStore]:
+        backend = props.get("freshness")
+        if not backend:
+            return None
+        backend = str(backend).lower()
+        if backend == "none":
+            return None
+        if backend == "memory":
+            from .freshness import MemoryFreshnessStore
+            return MemoryFreshnessStore()
+        # "file" (default) and any unknown value fall back to the file store.
+        import os
+        from .freshness import FileFreshnessStore, MemoryFreshnessStore
+        default_path = os.path.join(os.path.expanduser("~"), ".blue-web", "freshness.json")
+        path = props.get("freshness_path", default_path)
+        try:
+            parent = os.path.dirname(path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            return FileFreshnessStore(path)
+        except OSError:
+            _log.warning(
+                "freshness=file but %r is not writable; falling back to an in-memory "
+                "freshness store (no cleanup across separate runs).", path,
+            )
+            return MemoryFreshnessStore()
 
     @property
     def default_collection(self) -> str:
@@ -141,95 +264,47 @@ class WebDataSource(DataSource):
         """
         import os
 
-        embedding_backend = os.getenv("BLUE_WEB_EMBEDDING", "dummy").lower()
-        if embedding_backend == "openai":
-            from blue_data_doc_source.source.document.embeddings.openai_embedding import OpenAIEmbeddingModel
-            embedding_model = OpenAIEmbeddingModel(
-                model=os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
-            )
-        else:
-            from blue_data_doc_source.source.document.embeddings.dummy_embedding import DummyEmbeddingModel
-            embedding_model = DummyEmbeddingModel()
+        # Translate BLUE_WEB_* env vars into a ``properties`` dict and let the
+        # constructor build the collaborators from it. Routing through properties
+        # (rather than passing Python objects) means a source built by this factory
+        # is reconstructible from its stored record too — DataSource contract §4.
+        props: Dict[str, Any] = {
+            "embedding": os.getenv("BLUE_WEB_EMBEDDING", "dummy").lower(),
+            "enricher": os.getenv("BLUE_WEB_ENRICHER", "basic").lower(),
+            # A freshness store is configured by default (``file``) so the CLI, REST
+            # API and MCP server skip re-embedding unchanged pages and, crucially,
+            # delete stale surplus chunks when a page shrinks on re-ingest (#32).
+            "freshness": os.getenv("BLUE_WEB_FRESHNESS", "file").lower(),
+            "collection": os.getenv("BLUE_WEB_COLLECTION", "web"),
+            "chunk_size": int(os.getenv("BLUE_WEB_CHUNK_SIZE", "1000")),
+            "overlap": int(os.getenv("BLUE_WEB_OVERLAP", "150")),
+            "timeout": float(os.getenv("BLUE_WEB_TIMEOUT", "30")),
+            "max_workers": int(os.getenv("BLUE_WEB_MAX_WORKERS", "10")),
+            "ingest_delay": float(os.getenv("BLUE_WEB_INGEST_DELAY", "0")),
+        }
+        if props["embedding"] == "openai":
+            props["openai_embedding_model"] = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+        if props["enricher"] == "llm":
+            props["llm_model"] = os.getenv("BLUE_WEB_LLM_MODEL", "gpt-4o-mini")
 
         redis_host = os.getenv("BLUE_WEB_REDIS_HOST")
         if redis_host:
-            from blue_data.source.vector.redis.redis_vector_source import RedisVectorSource
-            # blue-data's RedisVectorSource takes connection settings under
-            # properties["connection"], not host=/port= keywords. scan_prefix is
-            # required for its key layout (f"{scan_prefix}{collection}:{doc_id}").
-            vector_source = RedisVectorSource(
-                name="redis",
-                properties={"connection": {
-                    "host": redis_host,
-                    "port": int(os.getenv("BLUE_WEB_REDIS_PORT", "6379")),
-                    "scan_prefix": os.getenv("BLUE_WEB_REDIS_PREFIX", "web:"),
-                }},
-            )
+            props["vector"] = "redis"
+            props["connection"] = {
+                "host": redis_host,
+                "port": int(os.getenv("BLUE_WEB_REDIS_PORT", "6379")),
+                "scan_prefix": os.getenv("BLUE_WEB_REDIS_PREFIX", "web:"),
+            }
         else:
             # No Redis configured — fall back to an in-memory vector store so the
             # source is still searchable (data is lost on restart), as documented.
-            from blue_data.source.vector.memory_vector_source import MemoryVectorSource
-            vector_source = MemoryVectorSource(name="memory")
+            props["vector"] = "memory"
 
-        enricher_backend = os.getenv("BLUE_WEB_ENRICHER", "basic").lower()
-        if enricher_backend == "none":
-            enricher = None
-        elif enricher_backend == "llm":
-            from blue_data_doc_source.source.document.enrichment import BasicEnricher, LLMEnricher
-            llm_model = os.getenv("BLUE_WEB_LLM_MODEL", "gpt-4o-mini")
-            def _llm_fn(prompt: str) -> str:
-                from openai import OpenAI
-                return OpenAI().chat.completions.create(
-                    model=llm_model,
-                    messages=[{"role": "user", "content": prompt}],
-                ).choices[0].message.content or ""
-            enricher = LLMEnricher(llm_fn=_llm_fn, fallback=BasicEnricher())
-        else:
-            from blue_data_doc_source.source.document.enrichment import BasicEnricher
-            enricher = BasicEnricher()
+        freshness_path = os.getenv("BLUE_WEB_FRESHNESS_PATH")
+        if freshness_path:
+            props["freshness_path"] = freshness_path
 
-        # Configure a freshness store by default. Besides skipping re-embedding of
-        # unchanged pages, the store records each page's previous chunk_count,
-        # which the pipeline needs to delete stale surplus chunks when a page
-        # shrinks on re-ingest. Without it the platform surfaces would leak those
-        # chunks (see issue #32 follow-up).
-        freshness_backend = os.getenv("BLUE_WEB_FRESHNESS", "file").lower()
-        freshness_store = None
-        if freshness_backend == "memory":
-            from .freshness import MemoryFreshnessStore
-            freshness_store = MemoryFreshnessStore()
-        elif freshness_backend != "none":  # "file" (default); unknown values fall back to file
-            from .freshness import FileFreshnessStore, MemoryFreshnessStore
-            default_path = os.path.join(os.path.expanduser("~"), ".blue-web", "freshness.json")
-            path = os.getenv("BLUE_WEB_FRESHNESS_PATH", default_path)
-            try:
-                parent = os.path.dirname(path)
-                if parent:
-                    os.makedirs(parent, exist_ok=True)
-                freshness_store = FileFreshnessStore(path)
-            except OSError:
-                import logging
-                logging.getLogger(__name__).warning(
-                    "BLUE_WEB_FRESHNESS=file but %r is not writable; falling back to an "
-                    "in-memory freshness store (no cleanup across separate runs). Set "
-                    "BLUE_WEB_FRESHNESS_PATH to a writable location or BLUE_WEB_FRESHNESS=none.",
-                    path,
-                )
-                freshness_store = MemoryFreshnessStore()
-
-        return cls(
-            name=name,
-            embedding_model=embedding_model,
-            vector_source=vector_source,
-            enricher=enricher,
-            chunk_size=int(os.getenv("BLUE_WEB_CHUNK_SIZE", "1000")),
-            overlap=int(os.getenv("BLUE_WEB_OVERLAP", "150")),
-            default_collection=os.getenv("BLUE_WEB_COLLECTION", "web"),
-            timeout=float(os.getenv("BLUE_WEB_TIMEOUT", "30")),
-            max_workers=int(os.getenv("BLUE_WEB_MAX_WORKERS", "10")),
-            freshness_store=freshness_store,
-            ingest_delay=float(os.getenv("BLUE_WEB_INGEST_DELAY", "0")),
-        )
+        return cls(name=name, properties=props)
 
     def execute_query(self, query, database=None, collection=None, optional_properties=None):
         op = query.get("op")
