@@ -23,6 +23,10 @@ def mock_source():
 
 
 @pytest.fixture()
-def client(mock_source):
+def client(mock_source, monkeypatch):
+    # The app now enforces an API key by default (blue_data.server, #75). The
+    # functional route tests exercise behaviour, not auth, so run them with auth
+    # explicitly disabled; the security policy itself is covered in test_security.py.
+    monkeypatch.setenv("BLUE_WEB_API_AUTH_DISABLED", "true")
     with TestClient(app, raise_server_exceptions=True) as c:
         yield c

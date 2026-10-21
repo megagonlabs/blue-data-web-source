@@ -15,6 +15,9 @@ maintainers = [
 requires-python = ">=3.10"
 dependencies = [
     "blue-data-web-source>=0.1.0",
+    # Shared server policy: loopback bind, API-key auth, and CSRF guard
+    # (blue_data.server). The [server] extra provides the helper. #75 / XR-08.
+    "blue-data[server]>=0.1.0",
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.29.0",
 ]
