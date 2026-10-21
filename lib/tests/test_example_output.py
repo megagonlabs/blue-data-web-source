@@ -43,9 +43,30 @@ OFFLINE_SCRIPTS = [
     _EXAMPLES / "integration-demos" / "crawler_demo.py",
 ]
 
+# Scripts whose captured output depends on the NPR HTML fixture (served via
+# examples/mock_fetcher.py). That fixture is third-party content and is not
+# committed to the repo — it is fetched on demand (see README "Disclosures" and
+# scripts/fetch_fixtures.py). When it is absent these scripts cannot reproduce
+# their .expected output, so skip them with a clear reason rather than fail. #80
+_FIXTURE = _REPO / "data" / "fixtures" / "npr_article.html"
+_FIXTURE_DEPENDENT = {
+    "memory_quickstart.py",
+    "demo_web.py",
+    "crawl_vs_single_demo.py",
+    "multi_url_demo.py",
+    "crawler_demo.py",
+}
+
 
 @pytest.mark.parametrize("script", OFFLINE_SCRIPTS, ids=lambda p: p.stem)
 def test_example_output(script: Path):
+    if script.name in _FIXTURE_DEPENDENT and not _FIXTURE.exists():
+        pytest.skip(
+            f"{script.name} needs the NPR fixture, which is not committed. "
+            "Run `python scripts/fetch_fixtures.py` to download it "
+            "(third-party content; see README 'Disclosures')."
+        )
+
     expected_file = script.with_suffix(".expected")
     assert expected_file.exists(), (
         f"Missing captured output file: {expected_file.relative_to(_REPO)}\n"
