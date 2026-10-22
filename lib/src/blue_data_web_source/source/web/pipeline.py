@@ -312,7 +312,12 @@ class WebPipeline:
         from .feed import FeedParser
 
         fetch_result = self._fetcher.fetch(url)
-        parsed = FeedParser().parse(fetch_result.html, url)
+        # Parse the *fetched bytes* as data. Never hand feedparser a string it could
+        # treat as a URL or file path (#43); FeedParser wraps the body in a stream.
+        # Prefer the raw bytes; fall back to the decoded body if a caller/fetcher
+        # supplied only that.
+        body = fetch_result.content or fetch_result.html
+        parsed = FeedParser().parse(body, url, content_type=fetch_result.content_type)
 
         entries = parsed.entries
 

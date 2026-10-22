@@ -17,6 +17,9 @@ class FetchResult:
     html: str
     status_code: int
     content_type: str
+    # Raw, undecoded response body. Used where the bytes must be treated strictly
+    # as data (e.g. feed parsing, #43) rather than re-decoded or interpreted.
+    content: bytes = b""
 
 
 class WebFetcher:
@@ -38,6 +41,7 @@ class WebFetcher:
                 html=response.text,
                 status_code=response.status_code,
                 content_type=response.headers.get("content-type", ""),
+                content=response.content,
             )
             _log.debug(
                 "fetched %s  [%d %s, %d chars]",

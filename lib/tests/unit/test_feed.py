@@ -92,6 +92,32 @@ class TestFeedParser:
         assert result.entries[0].url == "https://example.com/atom-1"
         assert result.entries[0].title == "Atom Article"
 
+    def test_accepts_bytes(self):
+        # The fetched body arrives as bytes; parsing must work the same as for str.
+        result = FeedParser().parse(RSS_FEED.encode("utf-8"), _FEED_URL)
+        assert len(result.entries) == 2
+
+    # ── #43: a feed body must be parsed as data, never resolved as a location ──
+
+    def test_body_that_is_a_file_path_is_not_opened(self, tmp_path):
+        """A body that is just a local path must be parsed as data, not opened.
+
+        feedparser.parse() treats a bare string as "a URL, a file path, or a
+        document". We put a *valid* feed at a real path, then pass that path as the
+        body: if the file were opened its two entries would appear. It must not be —
+        the path string is the (invalid-XML) document, so no entries are produced.
+        """
+        real_feed = tmp_path / "real_feed.xml"
+        real_feed.write_text(RSS_FEED, encoding="utf-8")
+
+        result = FeedParser().parse(str(real_feed).encode("utf-8"), _FEED_URL)
+        assert result.entries == []
+
+    def test_body_that_is_a_url_is_not_fetched(self):
+        """A body that is just a URL must not trigger a second request."""
+        result = FeedParser().parse(b"https://example.com/elsewhere.xml", _FEED_URL)
+        assert result.entries == []
+
     def test_atom_feed_title(self):
         result = FeedParser().parse(ATOM_FEED, "https://example.com/atom.xml")
         assert result.feed_title == "Atom Test Feed"
