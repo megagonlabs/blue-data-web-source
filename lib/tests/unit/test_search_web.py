@@ -183,3 +183,58 @@ def test_search_web_uses_tavily_by_default():
         except Exception:
             pass
     assert isinstance(source._search_provider, TavilySearchProvider)
+
+
+# ── #35: scope — current search results vs whole collection ───────────────────
+
+_OLD_HTML = (
+    "<html><body><article><h1>Stale</h1>"
+    "<p>An older page about solar energy that was indexed long ago and is not in "
+    "the current web search result set at all.</p></article></body></html>"
+)
+_NEW_HTML = (
+    "<html><body><article><h1>Fresh</h1>"
+    "<p>A fresh page about solar energy returned by the current live web search "
+    "and ingested on the fly for this request.</p></article></body></html>"
+)
+_OLD_URL = "https://old.example.com/stale"
+_NEW_URL = "https://new.example.com/fresh"
+
+
+def _seed_and_search(httpx_mock, scope=None):
+    """Pre-seed an old page, then WEB.SEARCH_WEB a query that matches both pages."""
+    httpx_mock.add_response(url=_OLD_URL, text=_OLD_HTML,
+                            headers={"content-type": "text/html"})
+    httpx_mock.add_response(url=_NEW_URL, text=_NEW_HTML,
+                            headers={"content-type": "text/html"})
+    source = _make_source(search_provider=_mock_provider([_NEW_URL]))
+    source.execute_query({"op": "WEB.ENSURE_INDEX"})
+    source.execute_query({"op": "WEB.INGEST", "url": _OLD_URL})  # old page, not a current result
+    op = {"op": "WEB.SEARCH_WEB", "query": "solar energy", "k": 10}
+    if scope is not None:
+        op["scope"] = scope
+    return source.execute_query(op)
+
+
+def test_search_web_default_scope_excludes_old_collection_pages(httpx_mock):
+    # Default scope = current_search_results: an old indexed page that is NOT in
+    # this search's results must not surface (#35).
+    results = _seed_and_search(httpx_mock)
+    domains = {r["domain"] for r in results}
+    assert "new.example.com" in domains
+    assert "old.example.com" not in domains
+
+
+def test_search_web_collection_scope_includes_old_pages(httpx_mock):
+    # Opt-in scope = collection: rank over the whole corpus, old page included.
+    results = _seed_and_search(httpx_mock, scope="collection")
+    domains = {r["domain"] for r in results}
+    assert "new.example.com" in domains
+    assert "old.example.com" in domains
+
+
+def test_search_web_rejects_unknown_scope():
+    source = _make_source(search_provider=_mock_provider([]))
+    source.execute_query({"op": "WEB.ENSURE_INDEX"})
+    with pytest.raises(ValueError, match="scope"):
+        source.execute_query({"op": "WEB.SEARCH_WEB", "query": "x", "scope": "bogus"})

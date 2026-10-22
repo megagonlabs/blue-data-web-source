@@ -513,15 +513,20 @@ def live() -> None:
 @live.command("search")
 @click.argument("query")
 @click.option("--urls", default=5, show_default=True, metavar="N", help="Number of URLs to fetch from the live search API.")
+@click.option("--scope", type=click.Choice(["current_search_results", "collection"]), default="current_search_results",
+              show_default=True,
+              help="Rank only this search's result pages (default) or the whole collection.")
 @click.option("--collection", default=None, show_default="web", help="Collection name (overrides BLUE_WEB_COLLECTION).")
 @_log_options
 @click.pass_context
-def live_search(ctx: click.Context, query: str, urls: int, collection: Optional[str], log: bool, log_limit: int) -> None:
+def live_search(ctx: click.Context, query: str, urls: int, scope: str, collection: Optional[str], log: bool, log_limit: int) -> None:
     """Search the live web, import the top results, and return ranked chunks.
 
     Calls Tavily to find the k most relevant URLs, fetches and imports each
     on the fly, then returns semantically ranked chunks. Results are always fresh
-    rather than from a pre-built index.
+    rather than from a pre-built index. By default only the pages this search
+    returned are ranked (so an older imported page is never surfaced); use
+    --scope collection to rank over everything already imported.
 
     Requires TAVILY_API_KEY and BLUE_WEB_REDIS_HOST.
     """
@@ -530,7 +535,7 @@ def live_search(ctx: click.Context, query: str, urls: int, collection: Optional[
     coll = collection or _default_collection()
     try:
         source = get_source()
-        results = source.execute_query({"op": "WEB.SEARCH_WEB", "query": query, "k": urls, "collection": coll})
+        results = source.execute_query({"op": "WEB.SEARCH_WEB", "query": query, "k": urls, "collection": coll, "scope": scope})
     except Exception as exc:
         _err(str(exc), fmt)
 

@@ -280,7 +280,8 @@ def test_search_web_returns_hits():
     assert result["count"] == 1
     assert result["results"][0]["url"] == "https://example.com/article"
     source.execute_query.assert_called_once_with({
-        "op": "WEB.SEARCH_WEB", "query": "AI safety research", "k": 5, "collection": "web"
+        "op": "WEB.SEARCH_WEB", "query": "AI safety research", "k": 5, "collection": "web",
+        "scope": "current_search_results",
     })
 
 
