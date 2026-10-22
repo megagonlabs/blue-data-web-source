@@ -222,12 +222,18 @@ def search_web(
     query: Annotated[str, Field(description="Search query sent to the live web search API (Tavily).")],
     collection: Annotated[str, Field(description="Vector index collection name where results are stored.")] = "web",
     k: Annotated[int, Field(description="Number of URLs to fetch from the search API; each is chunked and ranked.", ge=1)] = 5,
+    scope: Annotated[str, Field(
+        description="'current_search_results' (default) ranks only the pages this "
+                    "search returned; 'collection' ranks over the whole ingested corpus.",
+    )] = "current_search_results",
 ) -> str:
     """Search the live web, ingest the top results, and return ranked chunks.
 
     Uses Tavily to find the k most relevant URLs for the query, ingests each
     page on the fly, then returns semantically ranked chunks. Results are fresh
-    (fetched at call time) rather than from a pre-built index.
+    (fetched at call time) rather than from a pre-built index. By default only the
+    pages returned by this search are ranked, so an older page already in the
+    collection is never surfaced; pass scope="collection" to rank over the corpus.
 
     Requires TAVILY_API_KEY and BLUE_WEB_REDIS_HOST environment variables.
     """
@@ -238,6 +244,7 @@ def search_web(
             "query": query,
             "k": k,
             "collection": collection,
+            "scope": scope,
         })
         hits = []
         for r in results:

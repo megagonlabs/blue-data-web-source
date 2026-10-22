@@ -32,7 +32,9 @@ class WebDataSource(DataSource):
     - ``WEB.INGEST`` — fetch, extract, chunk, embed, and upsert one URL (``url``) or multiple (``urls``)
     - ``WEB.INGEST_FEED`` — fetch an RSS/Atom feed and ingest each article; optional ``max_items``
     - ``WEB.CRAWL`` — BFS crawl from a seed URL; configurable ``depth`` and ``max_pages``
-    - ``WEB.SEARCH_WEB`` — search the web, ingest top-k pages on the fly, return ranked chunks
+    - ``WEB.SEARCH_WEB`` — search the web, ingest top-k pages on the fly, return ranked chunks.
+      ``scope`` controls what is ranked: ``"current_search_results"`` (default) ranks only the
+      pages this search returned; ``"collection"`` ranks over the whole ingested corpus (#35)
     - ``WEB.SEARCH`` — embed a query and return matching chunks via KNN
     - ``WEB.ENSURE_INDEX`` — create the vector index for a collection
     - ``WEB.EXTRACT`` — fetch a URL and extract structured fields via a caller-supplied JSON Schema
@@ -398,6 +400,13 @@ class WebDataSource(DataSource):
         query = request.get("query")
         if not query:
             raise ValueError("WEB.SEARCH_WEB requires a 'query' field")
+        scope = request.get("scope", "current_search_results")
+        if scope not in ("current_search_results", "collection"):
+            raise ValueError(
+                "WEB.SEARCH_WEB 'scope' must be 'current_search_results' (default, "
+                "rank only this search's result pages) or 'collection' (rank over "
+                f"the whole collection). Got {scope!r}."
+            )
         if self._search_provider is None:
             from .search_provider import TavilySearchProvider
             self._search_provider = TavilySearchProvider()
@@ -418,7 +427,24 @@ class WebDataSource(DataSource):
                     "the rest failed, were empty, or were unchanged",
                     len(ingested_urls), len(urls),
                 )
-        return self._pipeline.search(query, k=top_k, collection=collection)
+
+        if scope == "collection":
+            # Rank over everything ever ingested into the collection.
+            return self._pipeline.search(query, k=top_k, collection=collection)
+
+        # Default: rank only within the pages this search actually ingested, so a
+        # live web search never surfaces an old, unrelated page that merely happens
+        # to be in the collection (#35). Scope is the distinct page_ids from this
+        # call's records; a result page skipped as unchanged by freshness tracking
+        # is not re-added here — pass scope="collection" to rank over the corpus.
+        page_ids: List[str] = []
+        seen: set = set()
+        for record in records:
+            page_id = record.get("page_id")
+            if page_id and page_id not in seen:
+                seen.add(page_id)
+                page_ids.append(page_id)
+        return self._pipeline.search_in_pages(query, page_ids, k=top_k, collection=collection)
 
     def _extract(self, request: Dict[str, Any]) -> Any:
         url = request.get("url")

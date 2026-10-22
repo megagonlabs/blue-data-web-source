@@ -4,7 +4,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from hashlib import sha256
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 from urllib.parse import urlparse
 
 from blue_data.source.vector.vector_source import VectorSource
@@ -425,26 +425,37 @@ class WebPipeline:
         matched_pages = self.find_records(find_filter)
         if not matched_pages:
             return []
+        page_ids = [p.get("document_id") for p in matched_pages]
+        return self.search_in_pages(query, page_ids, k=k, collection=collection)
 
+    def search_in_pages(
+        self,
+        query: str,
+        page_ids: Sequence[Optional[str]],
+        k: int = 5,
+        collection: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Embed *query* and KNN-rank only within the given *page_ids*.
+
+        Searches each page under a ``page_id`` pre-filter, then merges, de-duplicates
+        by ``chunk_id``, sorts by score (ascending cosine distance = closest first)
+        and caps at *k*. Falsy page IDs are skipped; an empty list yields ``[]``.
+
+        Used to scope retrieval to a specific set of pages rather than the whole
+        collection: the matches of a ``WEB.FIND`` filter (:meth:`find_then_search`)
+        or the result set of the current live web search (``WEB.SEARCH_WEB`` with
+        ``scope="current_search_results"``).
+        """
         seen: set = set()
         all_results: List[Dict[str, Any]] = []
-
-        for page in matched_pages:
-            page_id = page.get("document_id")
+        for page_id in page_ids:
             if not page_id:
                 continue
-            chunks = self.search(
-                query,
-                k=k,
-                collection=collection,
-                filters={"page_id": page_id},
-            )
-            for chunk in chunks:
+            for chunk in self.search(query, k=k, collection=collection, filters={"page_id": page_id}):
                 chunk_id = chunk.get("chunk_id", "")
                 if chunk_id not in seen:
                     seen.add(chunk_id)
                     all_results.append(chunk)
-
         # blue-data knn returns cosine distance in "score" (lower = closer), so
         # sort ascending to put the most similar chunks first.
         all_results.sort(key=lambda c: c.get("score") if c.get("score") is not None else float("inf"))

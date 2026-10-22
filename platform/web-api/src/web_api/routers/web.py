@@ -54,6 +54,9 @@ class SearchWebRequest(BaseModel):
     k: int = 5
     top_k: int = 5
     collection: Optional[str] = None
+    # "current_search_results" (default): rank only within this search's result
+    # pages. "collection": rank over the whole ingested corpus. (#35)
+    scope: str = "current_search_results"
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -208,6 +211,10 @@ def search_web(request: SearchWebRequest) -> Dict[str, Any]:
     Queries the search API for ``k`` URLs, ingests each through the full
     pipeline, and returns ``top_k`` semantically ranked chunks. Requires
     TAVILY_API_KEY. No prior ingest required.
+
+    ``scope`` defaults to ``current_search_results`` — ranking is restricted to the
+    pages this search returned, so an old page already in the collection is never
+    surfaced. Pass ``collection`` to rank over the whole ingested corpus instead.
     """
     source = get_source()
     try:
@@ -217,6 +224,7 @@ def search_web(request: SearchWebRequest) -> Dict[str, Any]:
             "k": request.k,
             "top_k": request.top_k,
             "collection": request.collection,
+            "scope": request.scope,
         })
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
