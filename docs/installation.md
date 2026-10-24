@@ -80,8 +80,8 @@ pip install -e 'lib/[all]'
 
 | Dependency | Version | Required by |
 |------------|---------|-------------|
-| `blue-data` | ≥0.1.0 | Always |
-| `blue-data-doc-source` | ≥0.1.0 | Always (chunkers, embeddings, enricher) |
+| `blue-data` | ≥1.0.0 | Always |
+| `blue-data-doc-source` | ≥1.0.0 | Always (chunkers, embeddings, enricher) |
 | `httpx` | ≥0.27.0 | Always (HTTP fetch) |
 | `trafilatura` | ≥1.9.0 | Always (HTML extraction) |
 | `openai` | ≥1.0.0 | `[openai]` extra |

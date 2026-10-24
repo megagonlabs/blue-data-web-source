@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "blue-data-web-mcp"
-version = "0.1.0"
+version = "1.0.0"
 description = "MCP server for blue-data-web-source"
 authors = [
     {name = "Jalal Mahmud", email = "contact_oss@megagon.ai"},
@@ -14,7 +14,7 @@ maintainers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "blue-data-web-source>=0.1.0",
+    "blue-data-web-source>=1.0.0",
     # Pin to the v1 SDK: server.py uses mcp.server.fastmcp.FastMCP, which mcp 2.x
     # removed (renamed to mcp.server.mcpserver.MCPServer). See issue #44.
     "mcp>=1.28.1,<2",

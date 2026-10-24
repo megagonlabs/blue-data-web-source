@@ -64,7 +64,7 @@ _OPEN_PATHS = DEFAULT_OPEN_PATHS | {"/web/health"}
 app = FastAPI(
     title="blue-data-web-source API",
     description="REST API for ingesting, crawling, extracting, and searching web content.",
-    version="0.1.0",
+    version="1.0.0",
     lifespan=lifespan,
     dependencies=security_dependencies("BLUE_WEB_API", open_paths=_OPEN_PATHS),
 )

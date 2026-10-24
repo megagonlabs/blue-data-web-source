@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "blue-data-web-cli"
-version = "0.1.0"
+version = "1.0.0"
 description = "Command-line interface for blue-data-web-source"
 authors = [
     {name = "Jalal Mahmud", email = "contact_oss@megagon.ai"},
@@ -14,7 +14,7 @@ maintainers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "blue-data-web-source>=0.1.0",
+    "blue-data-web-source>=1.0.0",
     "click>=8.0",
 ]
 
