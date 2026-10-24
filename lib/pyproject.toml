@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "blue-data-web-source"
-version = "0.1.0"
+version = "1.0.0"
 description = "Web and feed data source for Blue Data Intelligence"
 authors = [
     {name = "Jalal Mahmud", email = "contact_oss@megagon.ai"},
@@ -18,8 +18,8 @@ dependencies = [
     # scripts/install.sh / docs/installation.md). Plain requirements are used
     # rather than `@ file:../../...` URLs, which pip resolves against the current
     # working directory — not this file — so they never point at the sibling. #45
-    "blue-data>=0.1.0",
-    "blue-data-doc-source>=0.1.0",
+    "blue-data>=1.0.0",
+    "blue-data-doc-source>=1.0.0",
     "httpx>=0.27.0",
     "trafilatura>=1.9.0",
     # trafilatura imports lxml.html.clean, which lxml >= 5.2 no longer ships in the

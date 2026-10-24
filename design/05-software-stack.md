@@ -190,8 +190,8 @@ Unit tests mock `WebFetcher` via `MagicMock` and use `MemoryVectorSource` + `Dum
 
 | Package | Version | Extra | Role |
 |---------|---------|-------|------|
-| `blue-data` | ≥0.1.0 | always | `DataSource` ABC, `VectorSource` ABC and backends |
-| `blue-data-doc-source` | ≥0.1.0 | always | Chunkers, embedding models, enrichers, `StructuredFieldExtractor` |
+| `blue-data` | ≥1.0.0 | always | `DataSource` ABC, `VectorSource` ABC and backends |
+| `blue-data-doc-source` | ≥1.0.0 | always | Chunkers, embedding models, enrichers, `StructuredFieldExtractor` |
 | `httpx` | ≥0.27.0 | always | HTTP fetch |
 | `trafilatura` | ≥1.9.0 | always | HTML boilerplate removal and metadata extraction |
 | `openai` | ≥1.0.0 | `[openai]` | `OpenAIEmbeddingModel`; `StructuredFieldExtractor` |
