@@ -168,3 +168,40 @@ def test_file_store_discards_legacy_flat_format(tmp_path):
     path.write_text(json.dumps({"web_abc123": _RECORD}))
     store = FileFreshnessStore(str(path))
     assert store.get("web", "web_abc123") is None
+
+
+# ── #74: concurrent writers must not lose each other's updates ────────────────
+
+def _writer_worker(path: str, i: int) -> None:
+    """Separate-process writer: set one distinct record in the shared file."""
+    from blue_data_web_source.source.web.freshness import FileFreshnessStore
+
+    FileFreshnessStore(path).set("web", f"web_page_{i:03d}", {
+        "page_id": f"web_page_{i:03d}",
+        "content_hash": f"hash{i:03d}",
+        "url": f"https://example.com/{i}",
+        "chunk_count": 1,
+        "last_ingested_at": "2026-10-26T00:00:00+00:00",
+        "last_checked_at": "2026-10-26T00:00:00+00:00",
+    })
+
+
+def test_file_store_concurrent_processes_keep_all_updates(tmp_path):
+    pytest.importorskip("fcntl", reason="cross-process file lock needs POSIX fcntl")
+    import multiprocessing as mp
+
+    path = str(tmp_path / "freshness.json")
+    n = 16
+    ctx = mp.get_context("spawn")
+    procs = [ctx.Process(target=_writer_worker, args=(path, i)) for i in range(n)]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join(timeout=30)
+
+    # Every writer's update survived — none clobbered — and the file is valid JSON.
+    reopened = FileFreshnessStore(path)
+    kept = sum(1 for i in range(n) if reopened.get("web", f"web_page_{i:03d}") is not None)
+    assert kept == n
+    with open(path, encoding="utf-8") as fh:
+        json.load(fh)  # must be readable / uncorrupted

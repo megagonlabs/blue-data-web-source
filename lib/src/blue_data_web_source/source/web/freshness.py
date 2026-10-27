@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import tempfile
 import threading
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
+
+try:
+    import fcntl  # POSIX-only; used for the cross-process freshness-file lock (#74)
+except ImportError:  # pragma: no cover - non-POSIX (e.g. Windows)
+    fcntl = None
 
 
 class FreshnessStore(ABC):
@@ -90,32 +97,46 @@ class _DictFreshnessStore(FreshnessStore):
 
     def set(self, collection: str, page_id: str, record: Dict[str, Any]) -> None:
         with self._lock:
-            pages = self._store.setdefault(collection, {})
-            idx = self._hash_index.setdefault(collection, {})
-            old = pages.get(page_id)
-            old_hash = old.get("content_hash") if old else None
-            new_hash = record.get("content_hash")
-            if old_hash and old_hash != new_hash and idx.get(old_hash) == page_id:
-                idx.pop(old_hash, None)
-            pages[page_id] = record
-            if new_hash:
-                idx[new_hash] = page_id
+            self._apply_set(collection, page_id, record)
             self._persist()
+
+    def _apply_set(self, collection: str, page_id: str, record: Dict[str, Any]) -> bool:
+        """Apply a set to the in-memory state (no lock, no persist). Returns True."""
+        pages = self._store.setdefault(collection, {})
+        idx = self._hash_index.setdefault(collection, {})
+        old = pages.get(page_id)
+        old_hash = old.get("content_hash") if old else None
+        new_hash = record.get("content_hash")
+        if old_hash and old_hash != new_hash and idx.get(old_hash) == page_id:
+            idx.pop(old_hash, None)
+        pages[page_id] = record
+        if new_hash:
+            idx[new_hash] = page_id
+        return True
 
     def delete(self, collection: str, page_id: str) -> None:
         with self._lock:
-            pages = self._store.get(collection)
-            if not pages:
-                return
-            old = pages.pop(page_id, None)
-            if old is None:
-                return
-            old_hash = old.get("content_hash")
-            if old_hash:
-                idx = self._hash_index.get(collection, {})
-                if idx.get(old_hash) == page_id:
-                    idx.pop(old_hash, None)
-            self._persist()
+            if self._apply_delete(collection, page_id):
+                self._persist()
+
+    def _apply_delete(self, collection: str, page_id: str) -> bool:
+        """Apply a delete to the in-memory state (no lock, no persist).
+
+        Returns True if a record was removed (so the caller persists), False if the
+        delete was a no-op.
+        """
+        pages = self._store.get(collection)
+        if not pages:
+            return False
+        old = pages.pop(page_id, None)
+        if old is None:
+            return False
+        old_hash = old.get("content_hash")
+        if old_hash:
+            idx = self._hash_index.get(collection, {})
+            if idx.get(old_hash) == page_id:
+                idx.pop(old_hash, None)
+        return True
 
     def claim_content_hash(self, collection: str, content_hash: str, page_id: str) -> bool:
         with self._lock:
@@ -144,12 +165,23 @@ class MemoryFreshnessStore(_DictFreshnessStore):
 
 
 class FileFreshnessStore(_DictFreshnessStore):
-    """JSON-file-backed freshness store — survives process restarts.
+    """JSON-file-backed freshness store — survives process restarts, safe to share
+    across processes.
 
-    Writes atomically (to ``<path>.tmp`` then ``os.replace``) so a crash mid-write
-    never corrupts the file. On disk the store is ``{collection: {page_id: record}}``;
-    the per-collection content-hash index is derived on load and kept in memory
-    (claims are transient and intentionally not persisted).
+    On disk the store is ``{collection: {page_id: record}}``; the per-collection
+    content-hash index is derived on load and kept in memory (claims are transient
+    and intentionally not persisted).
+
+    Concurrency (#74): a fixed ``<path>.tmp`` + no lock let two processes sharing one
+    freshness file (e.g. the CLI and the REST/MCP server on one data directory)
+    clobber each other's writes. Every read-modify-write now runs under an exclusive
+    cross-process lock (``fcntl.flock`` on a ``<path>.lock`` sidecar) and **re-reads**
+    the file first, so each writer merges onto the latest state instead of
+    overwriting it. The write goes to a unique temp file in the same directory, then
+    ``os.replace`` swaps it in atomically — so the file is always readable and no two
+    writers share a temp name. Reads also re-read, so a long-lived process sees other
+    processes' updates. (``fcntl`` is POSIX-only; without it the cross-process lock is
+    a no-op and only in-process safety remains.)
 
     Args:
         path: Path to the JSON file. Created on first write if absent.
@@ -158,7 +190,60 @@ class FileFreshnessStore(_DictFreshnessStore):
     def __init__(self, path: str) -> None:
         super().__init__()
         self._path = path
+        self._lock_path = path + ".lock"
         self._load()
+
+    @contextlib.contextmanager
+    def _file_lock(self):
+        """Hold an exclusive cross-process lock on the ``.lock`` sidecar."""
+        if fcntl is None:  # pragma: no cover - non-POSIX
+            yield
+            return
+        parent = os.path.dirname(self._lock_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(self._lock_path, "w", encoding="utf-8") as lock_fh:
+            fcntl.flock(lock_fh, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_fh, fcntl.LOCK_UN)
+
+    def _reload_preserving_claims(self) -> None:
+        """Re-read the file, keeping transient (not-yet-persisted) claims.
+
+        ``_load`` rebuilds the hash index from stored records only, which would drop
+        in-flight claims made by :meth:`claim_content_hash` before their record is
+        written. Snapshot those claim-only entries and restore them after the reload.
+        """
+        claims = [
+            (collection, content_hash, page_id)
+            for collection, hashes in self._hash_index.items()
+            for content_hash, page_id in hashes.items()
+            if (self._store.get(collection, {}).get(page_id) or {}).get("content_hash") != content_hash
+        ]
+        self._load()
+        for collection, content_hash, page_id in claims:
+            self._hash_index.setdefault(collection, {}).setdefault(content_hash, page_id)
+
+    def get(self, collection: str, page_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            # Re-read so a long-lived process sees records written by other processes
+            # (os.replace makes writes atomic, so no lock is needed for the read).
+            self._reload_preserving_claims()
+            return self._store.get(collection, {}).get(page_id)
+
+    def set(self, collection: str, page_id: str, record: Dict[str, Any]) -> None:
+        with self._lock, self._file_lock():
+            self._reload_preserving_claims()
+            self._apply_set(collection, page_id, record)
+            self._persist()
+
+    def delete(self, collection: str, page_id: str) -> None:
+        with self._lock, self._file_lock():
+            self._reload_preserving_claims()
+            if self._apply_delete(collection, page_id):
+                self._persist()
 
     def _load(self) -> None:
         if not os.path.exists(self._path):
@@ -180,7 +265,16 @@ class FileFreshnessStore(_DictFreshnessStore):
         self._rebuild_hash_index()
 
     def _persist(self) -> None:
-        tmp = self._path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(self._store, fh, indent=2, ensure_ascii=False)
-        os.replace(tmp, self._path)
+        # Unique temp file in the same directory (two writers never share a name),
+        # then atomic os.replace so the file is always readable (#74).
+        directory = os.path.dirname(self._path) or "."
+        os.makedirs(directory, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=directory, prefix=".freshness-", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(self._store, fh, indent=2, ensure_ascii=False)
+            os.replace(tmp, self._path)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+            raise
