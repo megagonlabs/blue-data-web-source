@@ -246,3 +246,47 @@ class TestPriority:
         )
         m = _extractor.extract(html)
         assert m.description == "OG desc"
+
+
+# ---------------------------------------------------------------------------
+# #53: extract() must never raise, even on unusual markup
+# ---------------------------------------------------------------------------
+
+class TestNeverRaises:
+    def _ld(self, obj: dict) -> str:
+        return _html(f'<script type="application/ld+json">{json.dumps(obj)}</script>')
+
+    def test_object_valued_type_does_not_raise(self):
+        # {"@type": {...}} is unhashable → must not reach the article-type set lookup.
+        m = _extractor.extract(self._ld({"@type": {"x": 1}, "headline": "Hi"}))
+        assert isinstance(m, StructuredMetadata)
+        assert m.schema_type is None  # object @type coerces to unset
+
+    def test_object_valued_type_in_list_does_not_raise(self):
+        m = _extractor.extract(self._ld({"@type": [{"x": 1}], "headline": "Hi"}))
+        assert isinstance(m, StructuredMetadata)
+        assert m.schema_type is None
+
+    def test_object_type_still_extracts_sibling_fields(self):
+        m = _extractor.extract(self._ld({
+            "@type": {"x": 1},
+            "publisher": {"name": "ACME"},
+            "description": "d",
+        }))
+        assert m.schema_type is None
+        assert m.publisher == "ACME"
+        assert m.description == "d"
+
+    def test_valueless_meta_name_does_not_halt_parsing(self):
+        # A valueless <meta name> must not stop the single-pass parser and drop the
+        # OpenGraph tags that follow it (#53).
+        html = _html('<meta name><meta property="og:site_name" content="Pub">')
+        assert _extractor.extract(html).publisher == "Pub"
+
+    def test_valueless_property_attr_tolerated(self):
+        html = _html('<meta property><meta property="og:site_name" content="Pub">')
+        assert _extractor.extract(html).publisher == "Pub"
+
+    def test_valueless_link_rel_tolerated(self):
+        html = _html('<link rel><link rel="canonical" href="https://example.com/c">')
+        assert _extractor.extract(html).canonical_url == "https://example.com/c"

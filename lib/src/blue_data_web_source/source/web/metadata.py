@@ -38,19 +38,22 @@ class _MetaParser(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs) -> None:
         attrs_dict = dict(attrs)
+        # A valueless attribute (e.g. ``<meta name>``) parses to ``None``; use
+        # ``... or ""`` so ``.lower()`` never raises and halts the single-pass
+        # parser, dropping all later metadata (#53).
         if tag == "meta":
-            prop = attrs_dict.get("property", "").lower()
-            name = attrs_dict.get("name", "").lower()
-            content = attrs_dict.get("content", "")
+            prop = (attrs_dict.get("property") or "").lower()
+            name = (attrs_dict.get("name") or "").lower()
+            content = attrs_dict.get("content") or ""
             if prop.startswith("og:"):
                 self.og[prop[3:]] = content
             elif name:
                 self.meta[name] = content
         elif tag == "link":
-            if attrs_dict.get("rel", "").lower() == "canonical":
+            if (attrs_dict.get("rel") or "").lower() == "canonical":
                 self.canonical = attrs_dict.get("href") or None
         elif tag == "script":
-            if attrs_dict.get("type", "").lower() == "application/ld+json":
+            if (attrs_dict.get("type") or "").lower() == "application/ld+json":
                 self._in_jsonld = True
                 self._jsonld_buf = []
 
@@ -85,7 +88,9 @@ def _pick_jsonld(blocks: List[dict]) -> dict:
         t = block.get("@type", "")
         if isinstance(t, list):
             t = t[0] if t else ""
-        if t in _ARTICLE_TYPES:
+        # ``@type`` may be an object ({"@type": {...}}): not an article type, and
+        # unhashable, so it must not reach the set lookup (#53).
+        if isinstance(t, str) and t in _ARTICLE_TYPES:
             return block
     return blocks[0] if blocks else {}
 
@@ -95,6 +100,9 @@ def _coerce_str(val) -> Optional[str]:
         return None
     if isinstance(val, list):
         return _coerce_str(val[0]) if val else None
+    if isinstance(val, dict):
+        # e.g. an object-valued ``@type``/``url`` — no sensible scalar; treat as unset.
+        return None
     s = str(val).strip()
     return s or None
 
@@ -146,35 +154,49 @@ class MetadataExtractor:
         try:
             parser.feed(html)
         except Exception:
-            pass
+            pass  # keep whatever was parsed before the error
 
-        jsonld = _pick_jsonld(parser.jsonld_blocks)
-
-        return StructuredMetadata(
-            schema_type=_coerce_str(jsonld.get("@type")),
-            keywords=(
-                _parse_keywords(jsonld.get("keywords"))
-                or _parse_keywords(parser.meta.get("keywords"))
-            ),
-            publisher=(
-                _parse_publisher(jsonld.get("publisher"))
-                or _coerce_str(parser.og.get("site_name"))
-            ),
-            canonical_url=(
-                _coerce_str(jsonld.get("url"))
-                or parser.canonical
-                or _coerce_str(parser.og.get("url"))
-            ),
-            date_published=_coerce_str(
-                jsonld.get("datePublished") or jsonld.get("dateCreated")
-            ),
-            author=(
-                _parse_author(jsonld.get("author"))
-                or _coerce_str(parser.meta.get("author"))
-            ),
-            description=(
-                _coerce_str(jsonld.get("description"))
-                or _coerce_str(parser.og.get("description"))
-                or _coerce_str(parser.meta.get("description"))
-            ),
-        )
+        try:
+            jsonld = _pick_jsonld(parser.jsonld_blocks)
+            return StructuredMetadata(
+                schema_type=_coerce_str(jsonld.get("@type")),
+                keywords=(
+                    _parse_keywords(jsonld.get("keywords"))
+                    or _parse_keywords(parser.meta.get("keywords"))
+                ),
+                publisher=(
+                    _parse_publisher(jsonld.get("publisher"))
+                    or _coerce_str(parser.og.get("site_name"))
+                ),
+                canonical_url=(
+                    _coerce_str(jsonld.get("url"))
+                    or parser.canonical
+                    or _coerce_str(parser.og.get("url"))
+                ),
+                date_published=_coerce_str(
+                    jsonld.get("datePublished") or jsonld.get("dateCreated")
+                ),
+                author=(
+                    _parse_author(jsonld.get("author"))
+                    or _coerce_str(parser.meta.get("author"))
+                ),
+                description=(
+                    _coerce_str(jsonld.get("description"))
+                    or _coerce_str(parser.og.get("description"))
+                    or _coerce_str(parser.meta.get("description"))
+                ),
+            )
+        except Exception:
+            # Invariant (design/10): extract() never raises. If an unusual JSON-LD
+            # shape slips past the guards above, fall back to whatever OG / <meta> /
+            # <link> the single-pass parser already gathered.
+            return StructuredMetadata(
+                keywords=_parse_keywords(parser.meta.get("keywords")),
+                publisher=_coerce_str(parser.og.get("site_name")),
+                canonical_url=parser.canonical or _coerce_str(parser.og.get("url")),
+                author=_coerce_str(parser.meta.get("author")),
+                description=(
+                    _coerce_str(parser.og.get("description"))
+                    or _coerce_str(parser.meta.get("description"))
+                ),
+            )
