@@ -118,134 +118,147 @@ class WebPipeline:
         # persists this across ingests, so it stays 0 when none is configured.
         prev_chunk_count = 0
 
+        claimed_hash = False
         if self._freshness_store is not None:
-            stored = self._freshness_store.get(page_id)
+            stored = self._freshness_store.get(effective_collection, page_id)
             if stored and stored.get("content_hash") == content_hash:
                 _log.info("unchanged: %s", url)
-                self._freshness_store.set(page_id, {
+                self._freshness_store.set(effective_collection, page_id, {
                     **stored,
                     "last_checked_at": datetime.now(timezone.utc).isoformat(),
                 })
                 return []
 
-            # Cross-URL dedup: skip if identical text already ingested from a different URL
-            existing = self._freshness_store.get_by_content_hash(content_hash)
-            if existing and existing.get("url") != fetch_result.final_url:
-                _log.debug("duplicate content: %s (matches %s)", url, existing.get("url"))
+            # Cross-URL dedup within this collection, made atomic: claim the content
+            # hash before the expensive chunk/embed/upsert so two identical-text URLs
+            # ingested concurrently cannot both pass a check-then-act test (#46). A
+            # False claim means another page in this collection already owns the text.
+            if not self._freshness_store.claim_content_hash(effective_collection, content_hash, page_id):
+                _log.debug("duplicate content: %s (collection %r)", url, effective_collection)
                 return []
+            claimed_hash = True
 
             prev_chunk_count = stored.get("chunk_count", 0) if stored else 0
 
-        # Classification and field extraction — once per page.
-        # doc-source's DocumentClassifier.classify() returns a (document_type,
-        # confidence) tuple (not a dict), matching how doc-source's own pipeline
-        # unpacks it.
-        page_type: Optional[str] = None
-        if self._classifier is not None:
-            document_type, confidence = self._classifier.classify(extract_result.text)
-            page_type = document_type
-            if self._record_store is not None:
-                fields: Dict[str, Any] = {}
-                if self._field_extractor is not None and page_type is not None:
-                    fields = self._field_extractor.extract(extract_result.text, document_type=page_type)
-                self._record_store.upsert({
-                    "document_id": page_id,
-                    "document_type": page_type,
-                    "confidence": confidence,
-                    "classifier": type(self._classifier).__name__,
+        try:
+            # Classification and field extraction — once per page.
+            # doc-source's DocumentClassifier.classify() returns a (document_type,
+            # confidence) tuple (not a dict), matching how doc-source's own pipeline
+            # unpacks it.
+            page_type: Optional[str] = None
+            if self._classifier is not None:
+                document_type, confidence = self._classifier.classify(extract_result.text)
+                page_type = document_type
+                if self._record_store is not None:
+                    fields: Dict[str, Any] = {}
+                    if self._field_extractor is not None and page_type is not None:
+                        fields = self._field_extractor.extract(extract_result.text, document_type=page_type)
+                    self._record_store.upsert({
+                        "document_id": page_id,
+                        "document_type": page_type,
+                        "confidence": confidence,
+                        "classifier": type(self._classifier).__name__,
+                        "url": fetch_result.final_url,
+                        "fields": fields,
+                    })
+
+            chunks = self._chunker.chunk_with_titles(extract_result.text)
+            records = []
+
+            for idx, (section_title, chunk_text) in enumerate(chunks):
+                chunk_id = f"{page_id}_chunk_{idx:04d}"
+
+                embedding = None
+                if self._embedding_model is not None:
+                    embedding = self._embedding_model.embed_text(chunk_text)
+
+                entities: list = []
+                semantic_hints: dict = {}
+                if self._enricher is not None:
+                    enriched = self._enricher.enrich(chunk_text)
+                    entities = enriched.get("entities", [])
+                    semantic_hints = {k: v for k, v in enriched.items() if k != "entities"}
+
+                record = WebChunkRecord(
+                    url=fetch_result.final_url,
+                    domain=domain,
+                    chunk_id=chunk_id,
+                    chunk_index=idx,
+                    text=chunk_text,
+                    title=extract_result.title,
+                    author=extract_result.author or meta.author,
+                    date=extract_result.date or meta.date_published,
+                    description=(extract_result.description or meta.description) if idx == 0 else None,
+                    language=extract_result.language,
+                    collection=effective_collection,
+                    section_title=section_title,
+                    page_id=page_id,
+                    embedding=embedding,
+                    entities=entities,
+                    semantic_hints=semantic_hints,
+                    schema_type=meta.schema_type,
+                    keywords=meta.keywords,
+                    publisher=meta.publisher,
+                    canonical_url=meta.canonical_url,
+                )
+                record_dict = record.to_dict()
+                records.append(record_dict)
+
+                if self._vector_source is not None and embedding is not None:
+                    self._vector_source.upsert(
+                        collection=effective_collection,
+                        doc_id=chunk_id,
+                        doc=record_dict,
+                    )
+
+            # Delete stale surplus chunks. Chunk IDs are positional
+            # ({page_id}_chunk_{idx}); the upsert above overwrites indices
+            # 0..len(records)-1, but when a page shrinks the old higher-indexed
+            # chunks are left orphaned and still searchable. Remove them.
+            # prev_chunk_count is 0 without a freshness_store, so this is a no-op
+            # in that case (see docs: surplus cleanup requires a freshness_store).
+            if self._vector_source is not None and self._embedding_model is not None:
+                for idx in range(len(records), prev_chunk_count):
+                    self._vector_source.delete(
+                        collection=effective_collection,
+                        doc_id=f"{page_id}_chunk_{idx:04d}",
+                    )
+
+            if self._graph_indexer is not None and records:
+                # index_document is a no-op when the Document node already exists, so
+                # a changed page would otherwise keep its stale graph. Delete the
+                # prior document first to refresh it — this also drops section and
+                # chunk nodes removed when a page shrinks. Shared entity nodes are
+                # retained by delete_document. Safe no-op on first ingest.
+                self._graph_indexer.delete_document(page_id)
+                self._graph_indexer.index_document(
+                    document_id=page_id,
+                    file_name=fetch_result.final_url,
+                    document_type=page_type,
+                    records=records,
+                )
+
+            if self._freshness_store is not None:
+                now = datetime.now(timezone.utc).isoformat()
+                self._freshness_store.set(effective_collection, page_id, {
+                    "page_id": page_id,
+                    "content_hash": content_hash,
                     "url": fetch_result.final_url,
-                    "fields": fields,
+                    "chunk_count": len(records),
+                    "last_ingested_at": now,
+                    "last_checked_at": now,
                 })
 
-        chunks = self._chunker.chunk_with_titles(extract_result.text)
-        records = []
-
-        for idx, (section_title, chunk_text) in enumerate(chunks):
-            chunk_id = f"{page_id}_chunk_{idx:04d}"
-
-            embedding = None
-            if self._embedding_model is not None:
-                embedding = self._embedding_model.embed_text(chunk_text)
-
-            entities: list = []
-            semantic_hints: dict = {}
-            if self._enricher is not None:
-                enriched = self._enricher.enrich(chunk_text)
-                entities = enriched.get("entities", [])
-                semantic_hints = {k: v for k, v in enriched.items() if k != "entities"}
-
-            record = WebChunkRecord(
-                url=fetch_result.final_url,
-                domain=domain,
-                chunk_id=chunk_id,
-                chunk_index=idx,
-                text=chunk_text,
-                title=extract_result.title,
-                author=extract_result.author or meta.author,
-                date=extract_result.date or meta.date_published,
-                description=(extract_result.description or meta.description) if idx == 0 else None,
-                language=extract_result.language,
-                collection=effective_collection,
-                section_title=section_title,
-                page_id=page_id,
-                embedding=embedding,
-                entities=entities,
-                semantic_hints=semantic_hints,
-                schema_type=meta.schema_type,
-                keywords=meta.keywords,
-                publisher=meta.publisher,
-                canonical_url=meta.canonical_url,
-            )
-            record_dict = record.to_dict()
-            records.append(record_dict)
-
-            if self._vector_source is not None and embedding is not None:
-                self._vector_source.upsert(
-                    collection=effective_collection,
-                    doc_id=chunk_id,
-                    doc=record_dict,
+            _log.info("ingested %s: %d chunk%s", url, len(records), "s" if len(records) != 1 else "")
+            return records
+        except Exception:
+            # An ingest that fails after claiming the content hash must release
+            # the claim so the text is not blocked from a later ingest (#46).
+            if claimed_hash and self._freshness_store is not None:
+                self._freshness_store.release_content_hash(
+                    effective_collection, content_hash, page_id
                 )
-
-        # Delete stale surplus chunks. Chunk IDs are positional
-        # ({page_id}_chunk_{idx}); the upsert above overwrites indices
-        # 0..len(records)-1, but when a page shrinks the old higher-indexed
-        # chunks are left orphaned and still searchable. Remove them.
-        # prev_chunk_count is 0 without a freshness_store, so this is a no-op
-        # in that case (see docs: surplus cleanup requires a freshness_store).
-        if self._vector_source is not None and self._embedding_model is not None:
-            for idx in range(len(records), prev_chunk_count):
-                self._vector_source.delete(
-                    collection=effective_collection,
-                    doc_id=f"{page_id}_chunk_{idx:04d}",
-                )
-
-        if self._graph_indexer is not None and records:
-            # index_document is a no-op when the Document node already exists, so
-            # a changed page would otherwise keep its stale graph. Delete the
-            # prior document first to refresh it — this also drops section and
-            # chunk nodes removed when a page shrinks. Shared entity nodes are
-            # retained by delete_document. Safe no-op on first ingest.
-            self._graph_indexer.delete_document(page_id)
-            self._graph_indexer.index_document(
-                document_id=page_id,
-                file_name=fetch_result.final_url,
-                document_type=page_type,
-                records=records,
-            )
-
-        if self._freshness_store is not None:
-            now = datetime.now(timezone.utc).isoformat()
-            self._freshness_store.set(page_id, {
-                "page_id": page_id,
-                "content_hash": content_hash,
-                "url": fetch_result.final_url,
-                "chunk_count": len(records),
-                "last_ingested_at": now,
-                "last_checked_at": now,
-            })
-
-        _log.info("ingested %s: %d chunk%s", url, len(records), "s" if len(records) != 1 else "")
-        return records
+            raise
 
     def ingest_many(
         self,
