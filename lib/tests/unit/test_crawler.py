@@ -212,95 +212,117 @@ def test_crawl_strips_fragments_from_urls():
 # robots.txt compliance
 # ---------------------------------------------------------------------------
 
-def _mock_robots(allowed: bool, crawl_delay: float | None = None):
-    rp = MagicMock()
-    rp.can_fetch.return_value = allowed
-    rp.crawl_delay.return_value = crawl_delay
-    return rp
+_ROBOTS = _BASE + "/robots.txt"
 
 
-def test_crawl_skips_url_disallowed_by_robots():
-    fetcher = _make_fetcher({_BASE + "/": _INDEX_HTML})
+def _fetched_urls(fetcher):
+    return [c.args[0] for c in fetcher.fetch.call_args_list if c.args]
+
+
+def _ingested_urls(pipeline):
+    return {c.args[0] for c in pipeline.ingest.call_args_list if c.args}
+
+
+def test_crawl_fetches_robots_through_webfetcher():
+    # robots.txt must be fetched via WebFetcher (crawler User-Agent + timeout),
+    # not urllib with a generic agent and no timeout (#48).
+    fetcher = _make_fetcher({_BASE + "/": _INDEX_HTML, _ROBOTS: "User-agent: *\nAllow: /\n"})
+    crawler = WebCrawler(pipeline=_make_pipeline(), fetcher=fetcher,
+                         respect_robots=True, crawl_delay=0, max_retries=0)
+    crawler.crawl(_BASE + "/", depth=0, max_pages=10)
+    assert _ROBOTS in _fetched_urls(fetcher)
+
+
+def test_crawl_skips_discovered_link_disallowed_by_robots():
+    fetcher = _make_fetcher({
+        _BASE + "/": _INDEX_HTML,
+        _BASE + "/about": _ABOUT_HTML,
+        _BASE + "/contact": _CONTACT_HTML,
+        _ROBOTS: "User-agent: *\nDisallow: /about\n",
+    })
     pipeline = _make_pipeline()
+    crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
+                         respect_robots=True, crawl_delay=0, max_retries=0)
+    crawler.crawl(_BASE + "/", depth=1, max_pages=10)
 
-    with patch("blue_data_web_source.source.web.crawler.RobotFileParser") as mock_rfp:
-        mock_rfp.return_value = _mock_robots(allowed=False)
-        crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
-                             respect_robots=True, crawl_delay=0, max_retries=0)
-        crawler.crawl(_BASE + "/", depth=0, max_pages=10)
-
-    pipeline.ingest.assert_not_called()
+    ingested = _ingested_urls(pipeline)
+    assert _BASE + "/about" not in ingested   # disallowed discovered link
+    assert _BASE + "/contact" in ingested       # allowed discovered link
 
 
-def test_crawl_allows_url_permitted_by_robots():
-    fetcher = _make_fetcher({_BASE + "/": _INDEX_HTML})
+def test_crawl_allows_permitted_discovered_links():
+    fetcher = _make_fetcher({
+        _BASE + "/": _INDEX_HTML,
+        _BASE + "/about": _ABOUT_HTML,
+        _BASE + "/contact": _CONTACT_HTML,
+        _ROBOTS: "User-agent: *\nAllow: /\n",
+    })
     pipeline = _make_pipeline()
+    crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
+                         respect_robots=True, crawl_delay=0, max_retries=0)
+    crawler.crawl(_BASE + "/", depth=1, max_pages=10)
 
-    with patch("blue_data_web_source.source.web.crawler.RobotFileParser") as mock_rfp:
-        mock_rfp.return_value = _mock_robots(allowed=True)
-        crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
-                             respect_robots=True, crawl_delay=0, max_retries=0)
-        crawler.crawl(_BASE + "/", depth=0, max_pages=10)
+    assert {_BASE + "/", _BASE + "/about", _BASE + "/contact"} <= _ingested_urls(pipeline)
 
+
+def test_crawl_seed_ingested_even_when_robots_disallows_all():
+    # design/06: the seed is always ingested regardless of robots.txt (#48).
+    fetcher = _make_fetcher({_BASE + "/": _INDEX_HTML, _ROBOTS: "User-agent: *\nDisallow: /\n"})
+    pipeline = _make_pipeline()
+    crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
+                         respect_robots=True, crawl_delay=0, max_retries=0)
+    crawler.crawl(_BASE + "/", depth=0, max_pages=10)
     assert pipeline.ingest.call_count == 1
 
 
 def test_crawl_allows_all_when_robots_unreachable():
-    fetcher = _make_fetcher({_BASE + "/": _INDEX_HTML})
+    # robots.txt not served → fetch raises → allow-all, and the crawl still finishes.
+    fetcher = _make_fetcher({
+        _BASE + "/": _INDEX_HTML,
+        _BASE + "/about": _ABOUT_HTML,
+        _BASE + "/contact": _CONTACT_HTML,
+    })
     pipeline = _make_pipeline()
-
-    with patch("blue_data_web_source.source.web.crawler.RobotFileParser") as mock_rfp:
-        rp = MagicMock()
-        rp.read.side_effect = OSError("network error")
-        mock_rfp.return_value = rp
-        crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
-                             respect_robots=True, crawl_delay=0, max_retries=0)
-        crawler.crawl(_BASE + "/", depth=0, max_pages=10)
-
-    assert pipeline.ingest.call_count == 1
+    crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
+                         respect_robots=True, crawl_delay=0, max_retries=0)
+    crawler.crawl(_BASE + "/", depth=1, max_pages=10)
+    assert _BASE + "/about" in _ingested_urls(pipeline)  # allowed despite missing robots
 
 
 def test_crawl_caches_robots_per_domain():
-    url_map = {
+    fetcher = _make_fetcher({
         _BASE + "/": _INDEX_HTML,
         _BASE + "/about": _ABOUT_HTML,
-    }
-    fetcher = _make_fetcher(url_map)
-    pipeline = _make_pipeline()
+        _BASE + "/contact": _CONTACT_HTML,
+        _ROBOTS: "User-agent: *\nAllow: /\n",
+    })
+    crawler = WebCrawler(pipeline=_make_pipeline(), fetcher=fetcher,
+                         respect_robots=True, crawl_delay=0, max_retries=0)
+    crawler.crawl(_BASE + "/", depth=1, max_pages=10)
 
-    with patch("blue_data_web_source.source.web.crawler.RobotFileParser") as mock_rfp:
-        mock_rfp.return_value = _mock_robots(allowed=True)
-        crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
-                             respect_robots=True, crawl_delay=0, max_retries=0)
-        crawler.crawl(_BASE + "/", depth=1, max_pages=10)
-
-    # RobotFileParser should be instantiated once per domain, not once per page
-    assert mock_rfp.call_count == 1
+    # robots.txt is fetched once per domain, not once per page.
+    assert _fetched_urls(fetcher).count(_ROBOTS) == 1
 
 
-def test_crawl_respect_robots_false_skips_robots_check():
+def test_crawl_respect_robots_false_skips_robots_fetch():
     fetcher = _make_fetcher({_BASE + "/": _INDEX_HTML})
     pipeline = _make_pipeline()
+    crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
+                         respect_robots=False, crawl_delay=0, max_retries=0)
+    crawler.crawl(_BASE + "/", depth=0, max_pages=10)
 
-    with patch("blue_data_web_source.source.web.crawler.RobotFileParser") as mock_rfp:
-        crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
-                             respect_robots=False, crawl_delay=0, max_retries=0)
-        crawler.crawl(_BASE + "/", depth=0, max_pages=10)
-
-    mock_rfp.assert_not_called()
+    assert _ROBOTS not in _fetched_urls(fetcher)
     assert pipeline.ingest.call_count == 1
 
 
 def test_crawl_honours_robots_crawl_delay():
-    fetcher = _make_fetcher({_BASE + "/": _INDEX_HTML})
+    fetcher = _make_fetcher({_BASE + "/": _INDEX_HTML, _ROBOTS: "User-agent: *\nCrawl-delay: 5\n"})
     pipeline = _make_pipeline()
 
     sleep_calls = []
-    with patch("blue_data_web_source.source.web.crawler.RobotFileParser") as mock_rfp, \
-         patch("blue_data_web_source.source.web.crawler.time.sleep", side_effect=sleep_calls.append), \
+    with patch("blue_data_web_source.source.web.crawler.time.sleep", side_effect=sleep_calls.append), \
          patch("blue_data_web_source.source.web.crawler.time.monotonic", return_value=0.0):
-        # robots.txt says Crawl-delay: 5; our default is 1.0 — should use 5
-        mock_rfp.return_value = _mock_robots(allowed=True, crawl_delay=5.0)
+        # robots.txt says Crawl-delay: 5; our default is 1.0 — should use 5.
         crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher,
                              respect_robots=True, crawl_delay=1.0, max_retries=0)
         crawler.crawl(_BASE + "/", depth=0, max_pages=10)
