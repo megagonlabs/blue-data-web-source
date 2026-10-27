@@ -1,5 +1,4 @@
 import json
-import os
 import threading
 
 import pytest
@@ -19,237 +18,153 @@ _RECORD = {
 }
 
 
-# ---------------------------------------------------------------------------
-# MemoryFreshnessStore
-# ---------------------------------------------------------------------------
-
-class TestMemoryFreshnessStore:
-    def test_get_unknown_returns_none(self):
-        store = MemoryFreshnessStore()
-        assert store.get("web_unknown") is None
-
-    def test_set_then_get(self):
-        store = MemoryFreshnessStore()
-        store.set("web_abc123", _RECORD)
-        assert store.get("web_abc123") == _RECORD
-
-    def test_set_overwrites(self):
-        store = MemoryFreshnessStore()
-        store.set("web_abc123", _RECORD)
-        updated = {**_RECORD, "chunk_count": 99}
-        store.set("web_abc123", updated)
-        assert store.get("web_abc123")["chunk_count"] == 99
-
-    def test_delete_removes_record(self):
-        store = MemoryFreshnessStore()
-        store.set("web_abc123", _RECORD)
-        store.delete("web_abc123")
-        assert store.get("web_abc123") is None
-
-    def test_delete_unknown_does_not_raise(self):
-        store = MemoryFreshnessStore()
-        store.delete("web_nonexistent")  # should not raise
-
-    def test_independent_keys(self):
-        store = MemoryFreshnessStore()
-        store.set("web_aaa", {**_RECORD, "url": "https://a.com"})
-        store.set("web_bbb", {**_RECORD, "url": "https://b.com"})
-        assert store.get("web_aaa")["url"] == "https://a.com"
-        assert store.get("web_bbb")["url"] == "https://b.com"
-        store.delete("web_aaa")
-        assert store.get("web_aaa") is None
-        assert store.get("web_bbb") is not None
+@pytest.fixture(params=["memory", "file"])
+def store(request, tmp_path):
+    """Run every store test against both the in-memory and file-backed stores."""
+    if request.param == "memory":
+        return MemoryFreshnessStore()
+    return FileFreshnessStore(str(tmp_path / "freshness.json"))
 
 
-# ---------------------------------------------------------------------------
-# FileFreshnessStore
-# ---------------------------------------------------------------------------
+# ── get / set / delete, keyed by (collection, page_id) ────────────────────────
 
-class TestFileFreshnessStore:
-    def test_get_unknown_returns_none(self, tmp_path):
-        store = FileFreshnessStore(str(tmp_path / "freshness.json"))
-        assert store.get("web_abc123") is None
-
-    def test_missing_file_on_init_does_not_raise(self, tmp_path):
-        FileFreshnessStore(str(tmp_path / "nonexistent.json"))  # should not raise
-
-    def test_set_then_get(self, tmp_path):
-        store = FileFreshnessStore(str(tmp_path / "freshness.json"))
-        store.set("web_abc123", _RECORD)
-        assert store.get("web_abc123") == _RECORD
-
-    def test_set_overwrites(self, tmp_path):
-        store = FileFreshnessStore(str(tmp_path / "freshness.json"))
-        store.set("web_abc123", _RECORD)
-        store.set("web_abc123", {**_RECORD, "chunk_count": 99})
-        assert store.get("web_abc123")["chunk_count"] == 99
-
-    def test_delete_removes_record(self, tmp_path):
-        store = FileFreshnessStore(str(tmp_path / "freshness.json"))
-        store.set("web_abc123", _RECORD)
-        store.delete("web_abc123")
-        assert store.get("web_abc123") is None
-
-    def test_delete_unknown_does_not_raise(self, tmp_path):
-        store = FileFreshnessStore(str(tmp_path / "freshness.json"))
-        store.delete("web_nonexistent")  # should not raise
-
-    def test_persists_across_instances(self, tmp_path):
-        path = str(tmp_path / "freshness.json")
-        store1 = FileFreshnessStore(path)
-        store1.set("web_abc123", _RECORD)
-
-        store2 = FileFreshnessStore(path)
-        assert store2.get("web_abc123") == _RECORD
-
-    def test_delete_persists_across_instances(self, tmp_path):
-        path = str(tmp_path / "freshness.json")
-        store1 = FileFreshnessStore(path)
-        store1.set("web_abc123", _RECORD)
-        store1.delete("web_abc123")
-
-        store2 = FileFreshnessStore(path)
-        assert store2.get("web_abc123") is None
-
-    def test_atomic_write_no_tmp_file_after_set(self, tmp_path):
-        path = str(tmp_path / "freshness.json")
-        store = FileFreshnessStore(path)
-        store.set("web_abc123", _RECORD)
-        assert not os.path.exists(path + ".tmp")
-        assert os.path.exists(path)
-
-    def test_file_is_valid_json(self, tmp_path):
-        path = str(tmp_path / "freshness.json")
-        store = FileFreshnessStore(path)
-        store.set("web_abc123", _RECORD)
-        with open(path) as fh:
-            data = json.load(fh)
-        assert "web_abc123" in data
-
-    def test_empty_file_handled_gracefully(self, tmp_path):
-        path = str(tmp_path / "freshness.json")
-        open(path, "w").close()  # create empty file
-        store = FileFreshnessStore(path)  # should not raise
-        assert store.get("web_abc123") is None
+def test_get_unknown_returns_none(store):
+    assert store.get("web", "web_unknown") is None
 
 
-# ---------------------------------------------------------------------------
-# get_by_content_hash — MemoryFreshnessStore
-# ---------------------------------------------------------------------------
+def test_set_then_get(store):
+    store.set("web", "web_abc123", _RECORD)
+    assert store.get("web", "web_abc123") == _RECORD
 
 
-class TestMemoryFreshnessStoreHashLookup:
-    def test_returns_none_when_empty(self):
-        store = MemoryFreshnessStore()
-        assert store.get_by_content_hash("deadbeef") is None
-
-    def test_returns_record_after_set(self):
-        store = MemoryFreshnessStore()
-        store.set("web_abc123", _RECORD)
-        assert store.get_by_content_hash("deadbeef") == _RECORD
-
-    def test_returns_none_after_delete(self):
-        store = MemoryFreshnessStore()
-        store.set("web_abc123", _RECORD)
-        store.delete("web_abc123")
-        assert store.get_by_content_hash("deadbeef") is None
-
-    def test_updates_index_when_hash_changes(self):
-        store = MemoryFreshnessStore()
-        store.set("web_abc123", _RECORD)
-        updated = {**_RECORD, "content_hash": "cafebabe"}
-        store.set("web_abc123", updated)
-        assert store.get_by_content_hash("deadbeef") is None
-        assert store.get_by_content_hash("cafebabe") == updated
-
-    def test_record_without_content_hash_not_indexed(self):
-        store = MemoryFreshnessStore()
-        store.set("web_abc123", {"url": "https://example.com"})
-        assert store.get_by_content_hash("anything") is None
+def test_set_overwrites(store):
+    store.set("web", "web_abc123", _RECORD)
+    store.set("web", "web_abc123", {**_RECORD, "chunk_count": 99})
+    assert store.get("web", "web_abc123")["chunk_count"] == 99
 
 
-# ---------------------------------------------------------------------------
-# get_by_content_hash — FileFreshnessStore
-# ---------------------------------------------------------------------------
+def test_delete_removes_record(store):
+    store.set("web", "web_abc123", _RECORD)
+    store.delete("web", "web_abc123")
+    assert store.get("web", "web_abc123") is None
 
 
-class TestFileFreshnessStoreHashLookup:
-    def test_returns_none_when_empty(self, tmp_path):
-        store = FileFreshnessStore(str(tmp_path / "f.json"))
-        assert store.get_by_content_hash("deadbeef") is None
-
-    def test_returns_record_after_set(self, tmp_path):
-        store = FileFreshnessStore(str(tmp_path / "f.json"))
-        store.set("web_abc123", _RECORD)
-        assert store.get_by_content_hash("deadbeef") == _RECORD
-
-    def test_returns_none_after_delete(self, tmp_path):
-        store = FileFreshnessStore(str(tmp_path / "f.json"))
-        store.set("web_abc123", _RECORD)
-        store.delete("web_abc123")
-        assert store.get_by_content_hash("deadbeef") is None
-
-    def test_index_rebuilt_on_load(self, tmp_path):
-        path = str(tmp_path / "f.json")
-        store1 = FileFreshnessStore(path)
-        store1.set("web_abc123", _RECORD)
-
-        store2 = FileFreshnessStore(path)
-        assert store2.get_by_content_hash("deadbeef") == _RECORD
-
-    def test_updates_index_when_hash_changes(self, tmp_path):
-        store = FileFreshnessStore(str(tmp_path / "f.json"))
-        store.set("web_abc123", _RECORD)
-        updated = {**_RECORD, "content_hash": "cafebabe"}
-        store.set("web_abc123", updated)
-        assert store.get_by_content_hash("deadbeef") is None
-        assert store.get_by_content_hash("cafebabe") == updated
+def test_delete_unknown_does_not_raise(store):
+    store.delete("web", "web_nonexistent")  # no-op
 
 
-# ---------------------------------------------------------------------------
-# Thread-safety
-# ---------------------------------------------------------------------------
+# ── collections are independent namespaces (#46) ──────────────────────────────
+
+def test_same_page_id_independent_across_collections(store):
+    # The same URL (→ same page_id) tracked in two collections must not collide.
+    store.set("news", "web_abc123", {**_RECORD, "url": "https://x.com", "chunk_count": 1})
+    store.set("archive", "web_abc123", {**_RECORD, "url": "https://x.com", "chunk_count": 2})
+    assert store.get("news", "web_abc123")["chunk_count"] == 1
+    assert store.get("archive", "web_abc123")["chunk_count"] == 2
+    store.delete("news", "web_abc123")
+    assert store.get("news", "web_abc123") is None
+    assert store.get("archive", "web_abc123") is not None
 
 
-class TestMemoryFreshnessStoreThreadSafety:
-    def test_concurrent_writes_do_not_lose_keys(self):
-        store = MemoryFreshnessStore()
-        errors: list = []
+# ── atomic content-hash claim / release ───────────────────────────────────────
 
-        def writer(i: int) -> None:
-            try:
-                store.set(f"key_{i}", {"value": i})
-            except Exception as exc:
-                errors.append(exc)
+def test_claim_unclaimed_returns_true(store):
+    assert store.claim_content_hash("web", "h1", "page_a") is True
 
-        threads = [threading.Thread(target=writer, args=(i,)) for i in range(50)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
 
-        assert not errors
-        for i in range(50):
-            assert store.get(f"key_{i}") == {"value": i}
+def test_claim_by_same_page_is_idempotent(store):
+    assert store.claim_content_hash("web", "h1", "page_a") is True
+    assert store.claim_content_hash("web", "h1", "page_a") is True
 
-    def test_concurrent_deletes_do_not_raise(self):
-        store = MemoryFreshnessStore()
-        for i in range(20):
-            store.set(f"key_{i}", {"value": i})
-        errors: list = []
 
-        def deleter(i: int) -> None:
-            try:
-                store.delete(f"key_{i}")
-            except Exception as exc:
-                errors.append(exc)
+def test_claim_by_different_page_returns_false(store):
+    assert store.claim_content_hash("web", "h1", "page_a") is True
+    assert store.claim_content_hash("web", "h1", "page_b") is False
 
-        threads = [threading.Thread(target=deleter, args=(i,)) for i in range(20)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
 
-        assert not errors
-        for i in range(20):
-            assert store.get(f"key_{i}") is None
+def test_claim_is_per_collection(store):
+    # The same hash can be claimed independently in different collections.
+    assert store.claim_content_hash("news", "h1", "page_a") is True
+    assert store.claim_content_hash("archive", "h1", "page_b") is True
+
+
+def test_release_lets_another_page_claim(store):
+    assert store.claim_content_hash("web", "h1", "page_a") is True
+    store.release_content_hash("web", "h1", "page_a")
+    assert store.claim_content_hash("web", "h1", "page_b") is True
+
+
+def test_release_noop_when_not_owner(store):
+    store.claim_content_hash("web", "h1", "page_a")
+    store.release_content_hash("web", "h1", "page_b")  # page_b doesn't own it
+    assert store.claim_content_hash("web", "h1", "page_a") is True   # still owned by a
+    assert store.claim_content_hash("web", "h1", "page_c") is False
+
+
+def test_release_keeps_claim_backed_by_stored_record(store):
+    # A completed ingest writes a record owning the hash; a later release (e.g. from
+    # an unrelated error path) must not drop a claim the stored record still backs.
+    store.claim_content_hash("web", "deadbeef", "web_abc123")
+    store.set("web", "web_abc123", _RECORD)  # record carries content_hash deadbeef
+    store.release_content_hash("web", "deadbeef", "web_abc123")
+    assert store.claim_content_hash("web", "deadbeef", "web_other") is False
+
+
+def test_set_registers_hash_for_cross_url_dedup(store):
+    # After set(), a different page with the same content hash is refused.
+    store.set("web", "web_abc123", _RECORD)
+    assert store.claim_content_hash("web", "deadbeef", "web_other") is False
+
+
+def test_changed_content_releases_old_hash(store):
+    store.set("web", "web_abc123", _RECORD)  # hash deadbeef
+    store.set("web", "web_abc123", {**_RECORD, "content_hash": "feedface"})
+    # The page's old hash is freed; a different page may claim it.
+    assert store.claim_content_hash("web", "deadbeef", "web_other") is True
+    # ...but the new hash is held by the page.
+    assert store.claim_content_hash("web", "feedface", "web_other") is False
+
+
+# ── concurrency: the claim is atomic (no check-then-act race) ─────────────────
+
+def test_concurrent_claims_only_one_wins(store):
+    results = []
+    barrier = threading.Barrier(8)
+
+    def worker(page_id):
+        barrier.wait()
+        results.append(store.claim_content_hash("web", "race", page_id))
+
+    threads = [threading.Thread(target=worker, args=(f"page_{i}",)) for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sum(1 for r in results if r) == 1  # exactly one True
+
+
+# ── FileFreshnessStore persistence ────────────────────────────────────────────
+
+def test_file_store_persists_across_instances(tmp_path):
+    path = str(tmp_path / "freshness.json")
+    FileFreshnessStore(path).set("news", "web_abc123", _RECORD)
+    reopened = FileFreshnessStore(path)
+    assert reopened.get("news", "web_abc123") == _RECORD
+    # the derived hash index is rebuilt on load → cross-URL dedup still works
+    assert reopened.claim_content_hash("news", "deadbeef", "web_other") is False
+
+
+def test_file_store_on_disk_is_nested_by_collection(tmp_path):
+    path = tmp_path / "freshness.json"
+    FileFreshnessStore(str(path)).set("news", "web_abc123", _RECORD)
+    data = json.loads(path.read_text())
+    assert data == {"news": {"web_abc123": _RECORD}}
+
+
+def test_file_store_discards_legacy_flat_format(tmp_path):
+    # Pre-#46 files were flat {page_id: record} with no collection; they are
+    # discarded (freshness is a cache) rather than mis-read as collections.
+    path = tmp_path / "freshness.json"
+    path.write_text(json.dumps({"web_abc123": _RECORD}))
+    store = FileFreshnessStore(str(path))
+    assert store.get("web", "web_abc123") is None

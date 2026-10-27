@@ -351,7 +351,7 @@ def test_freshness_first_ingest_writes_store():
     records = pipeline.ingest("https://example.com")
 
     assert len(records) > 0
-    entry = store.get(_page_id())
+    entry = store.get("web", _page_id())
     assert entry is not None
     assert "content_hash" in entry
     assert entry["url"] == "https://example.com"
@@ -378,13 +378,13 @@ def test_freshness_unchanged_updates_last_checked_not_ingested():
 
     # Backdate last_checked_at so we can verify it gets updated
     pid = _page_id()
-    old_entry = store.get(pid)
+    old_entry = store.get("web", pid)
     original_ingested_at = old_entry["last_ingested_at"]
-    store.set(pid, {**old_entry, "last_checked_at": "2020-01-01T00:00:00+00:00"})
+    store.set("web", pid, {**old_entry, "last_checked_at": "2020-01-01T00:00:00+00:00"})
 
     pipeline.ingest("https://example.com")
 
-    updated = store.get(pid)
+    updated = store.get("web", pid)
     assert updated["last_ingested_at"] == original_ingested_at
     assert updated["last_checked_at"] != "2020-01-01T00:00:00+00:00"
 
@@ -394,7 +394,7 @@ def test_freshness_changed_content_reingests():
     pipeline = _make_pipeline(freshness_store=store)
 
     pipeline.ingest("https://example.com")
-    first_hash = store.get(_page_id())["content_hash"]
+    first_hash = store.get("web", _page_id())["content_hash"]
 
     pipeline._extractor.extract.return_value = _make_extract_result(
         text="Completely different content here. " * 30
@@ -402,7 +402,7 @@ def test_freshness_changed_content_reingests():
     second = pipeline.ingest("https://example.com")
 
     assert len(second) > 0
-    assert store.get(_page_id())["content_hash"] != first_hash
+    assert store.get("web", _page_id())["content_hash"] != first_hash
 
 
 def test_freshness_changed_content_updates_chunk_count():
@@ -421,7 +421,7 @@ def test_freshness_changed_content_updates_chunk_count():
     )
     pipeline.ingest("https://example.com")
 
-    assert store.get(_page_id())["chunk_count"] == 5
+    assert store.get("web", _page_id())["chunk_count"] == 5
 
 
 def test_freshness_no_store_reingest_always_processes():
@@ -438,7 +438,7 @@ def test_freshness_extractor_returns_none_does_not_write_store():
     pipeline._extractor.extract.return_value = None
 
     pipeline.ingest("https://example.com")
-    assert store.get(_page_id()) is None
+    assert store.get("web", _page_id()) is None
 
 
 # ---------------------------------------------------------------------------
@@ -575,8 +575,8 @@ def test_freshness_store_keyed_by_final_url_not_original():
 
     canonical_pid = _page_id("https://canonical.example.com")
     original_pid = _page_id("https://original.example.com")
-    assert store.get(canonical_pid) is not None
-    assert store.get(original_pid) is None
+    assert store.get("web", canonical_pid) is not None
+    assert store.get("web", original_pid) is None
 
 
 # ---------------------------------------------------------------------------
@@ -727,7 +727,7 @@ def test_reingest_shrink_deletes_surplus_vector_chunks():
 
     pipeline._chunker.chunk_with_titles.return_value = _chunks(5)
     pipeline.ingest("https://example.com")
-    assert store.get(_page_id())["chunk_count"] == 5
+    assert store.get("web", _page_id())["chunk_count"] == 5
 
     # Page shrinks to 2 chunks; content changed so it is re-ingested
     pipeline._chunker.chunk_with_titles.return_value = _chunks(2)
@@ -740,7 +740,7 @@ def test_reingest_shrink_deletes_surplus_vector_chunks():
     ]
     for call in pipeline._vector_source.delete.call_args_list:
         assert call.kwargs["collection"] == "web"
-    assert store.get(pid)["chunk_count"] == 2
+    assert store.get("web", pid)["chunk_count"] == 2
 
 
 def test_reingest_grow_deletes_nothing():

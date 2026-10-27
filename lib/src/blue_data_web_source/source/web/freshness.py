@@ -8,134 +8,179 @@ from typing import Any, Dict, Optional
 
 
 class FreshnessStore(ABC):
-    """Pluggable storage for per-page content hashes used to detect unchanged pages.
+    """Pluggable storage for per-(collection, page) content hashes.
 
-    Each record keyed by ``page_id`` contains:
-    ``content_hash``, ``url``, ``chunk_count``,
-    ``last_ingested_at`` (when content last changed and was re-processed),
-    ``last_checked_at`` (when the page was last fetched, even if unchanged).
+    Detects unchanged pages and de-duplicates identical body text *within a
+    collection*. Records are keyed by ``(collection, page_id)`` — page_id derives
+    from the URL — so the same URL ingested into two collections is tracked
+    independently; collections are independent namespaces (#46). Each record holds
+    ``content_hash``, ``url``, ``chunk_count``, ``last_ingested_at`` and
+    ``last_checked_at``.
 
-    Implementations must also maintain a reverse index from ``content_hash``
-    to ``page_id`` so that :meth:`get_by_content_hash` can detect when the
-    same body text has already been ingested from a different URL.
+    Implementations also keep a **per-collection** reverse index from
+    ``content_hash`` to ``page_id`` so cross-URL dedup can tell when the same body
+    text was already ingested from a *different* URL in the same collection. The
+    :meth:`claim_content_hash` / :meth:`release_content_hash` pair makes that check
+    atomic, so two identical-text URLs ingested concurrently cannot both pass it.
     """
 
     @abstractmethod
-    def get(self, page_id: str) -> Optional[Dict[str, Any]]:
-        """Return the stored record for *page_id*, or ``None`` if not seen before."""
+    def get(self, collection: str, page_id: str) -> Optional[Dict[str, Any]]:
+        """Return the record for *(collection, page_id)*, or ``None``."""
 
     @abstractmethod
-    def get_by_content_hash(self, content_hash: str) -> Optional[Dict[str, Any]]:
-        """Return the record whose ``content_hash`` matches, or ``None``.
+    def set(self, collection: str, page_id: str, record: Dict[str, Any]) -> None:
+        """Write or overwrite the record for *(collection, page_id)*."""
 
-        Used for cross-URL deduplication: if the same extracted text has
-        already been ingested from a different URL, the pipeline can skip
-        re-chunking and re-embedding the duplicate.
+    @abstractmethod
+    def delete(self, collection: str, page_id: str) -> None:
+        """Remove the record for *(collection, page_id)*. No-op if absent."""
+
+    @abstractmethod
+    def claim_content_hash(self, collection: str, content_hash: str, page_id: str) -> bool:
+        """Atomically claim *content_hash* for *(collection, page_id)*.
+
+        Returns ``True`` when the hash was unclaimed in the collection or already
+        owned by *page_id* (and is now owned by it); ``False`` when a *different*
+        page in the collection already owns it — i.e. a duplicate the caller should
+        skip. The check and the claim happen under one lock, so concurrent callers
+        with identical text cannot both receive ``True``.
         """
 
     @abstractmethod
-    def set(self, page_id: str, record: Dict[str, Any]) -> None:
-        """Write or overwrite the record for *page_id*."""
+    def release_content_hash(self, collection: str, content_hash: str, page_id: str) -> None:
+        """Release a claim made by *(collection, page_id)*.
 
-    @abstractmethod
-    def delete(self, page_id: str) -> None:
-        """Remove the record for *page_id*. No-op if not present."""
+        No-op unless *page_id* currently owns *content_hash* and no stored record
+        for it carries that hash. Called when an ingest fails after claiming, so a
+        half-done ingest does not block the hash permanently.
+        """
 
 
-class MemoryFreshnessStore(FreshnessStore):
-    """In-process freshness store — default, zero dependencies, lost on restart."""
+class _DictFreshnessStore(FreshnessStore):
+    """Shared in-memory implementation over nested dicts, guarded by one lock.
+
+    ``_store``:      ``collection -> page_id -> record``
+    ``_hash_index``: ``collection -> content_hash -> page_id``
+
+    Subclasses override :meth:`_persist` (called inside the lock after a record
+    mutation) to make writes durable.
+    """
 
     def __init__(self) -> None:
-        self._store: Dict[str, Dict[str, Any]] = {}
-        self._hash_index: Dict[str, str] = {}  # content_hash → page_id
+        self._store: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        self._hash_index: Dict[str, Dict[str, str]] = {}
         self._lock = threading.Lock()
 
-    def get(self, page_id: str) -> Optional[Dict[str, Any]]:
+    def _persist(self) -> None:
+        """Durability hook; no-op by default (in-memory)."""
+
+    def _rebuild_hash_index(self) -> None:
+        self._hash_index = {}
+        for collection, pages in self._store.items():
+            idx = self._hash_index.setdefault(collection, {})
+            for page_id, rec in pages.items():
+                content_hash = rec.get("content_hash")
+                if content_hash:
+                    idx[content_hash] = page_id
+
+    def get(self, collection: str, page_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
-            return self._store.get(page_id)
+            return self._store.get(collection, {}).get(page_id)
 
-    def get_by_content_hash(self, content_hash: str) -> Optional[Dict[str, Any]]:
+    def set(self, collection: str, page_id: str, record: Dict[str, Any]) -> None:
         with self._lock:
-            page_id = self._hash_index.get(content_hash)
-            return self._store.get(page_id) if page_id else None
+            pages = self._store.setdefault(collection, {})
+            idx = self._hash_index.setdefault(collection, {})
+            old = pages.get(page_id)
+            old_hash = old.get("content_hash") if old else None
+            new_hash = record.get("content_hash")
+            if old_hash and old_hash != new_hash and idx.get(old_hash) == page_id:
+                idx.pop(old_hash, None)
+            pages[page_id] = record
+            if new_hash:
+                idx[new_hash] = page_id
+            self._persist()
 
-    def set(self, page_id: str, record: Dict[str, Any]) -> None:
+    def delete(self, collection: str, page_id: str) -> None:
         with self._lock:
-            old = self._store.get(page_id)
-            if old and "content_hash" in old:
-                self._hash_index.pop(old["content_hash"], None)
-            if "content_hash" in record:
-                self._hash_index[record["content_hash"]] = page_id
-            self._store[page_id] = record
+            pages = self._store.get(collection)
+            if not pages:
+                return
+            old = pages.pop(page_id, None)
+            if old is None:
+                return
+            old_hash = old.get("content_hash")
+            if old_hash:
+                idx = self._hash_index.get(collection, {})
+                if idx.get(old_hash) == page_id:
+                    idx.pop(old_hash, None)
+            self._persist()
 
-    def delete(self, page_id: str) -> None:
+    def claim_content_hash(self, collection: str, content_hash: str, page_id: str) -> bool:
         with self._lock:
-            old = self._store.pop(page_id, None)
-            if old and "content_hash" in old:
-                self._hash_index.pop(old["content_hash"], None)
+            idx = self._hash_index.setdefault(collection, {})
+            owner = idx.get(content_hash)
+            if owner is None or owner == page_id:
+                idx[content_hash] = page_id
+                return True
+            return False
+
+    def release_content_hash(self, collection: str, content_hash: str, page_id: str) -> None:
+        with self._lock:
+            idx = self._hash_index.get(collection)
+            if not idx or idx.get(content_hash) != page_id:
+                return
+            # Keep the index if a stored record already owns this hash (the ingest
+            # completed before an unrelated error) so it stays consistent with the
+            # store; only drop a claim left by a half-done ingest.
+            rec = self._store.get(collection, {}).get(page_id)
+            if not rec or rec.get("content_hash") != content_hash:
+                idx.pop(content_hash, None)
 
 
-class FileFreshnessStore(FreshnessStore):
+class MemoryFreshnessStore(_DictFreshnessStore):
+    """In-process freshness store — default, zero dependencies, lost on restart."""
+
+
+class FileFreshnessStore(_DictFreshnessStore):
     """JSON-file-backed freshness store — survives process restarts.
 
-    Writes atomically (write to ``<path>.tmp`` then ``os.replace``) so a
-    crash mid-write never corrupts the file.
-
-    The content-hash reverse index is derived from the store on load and
-    maintained in memory; it does not need to be persisted separately.
+    Writes atomically (to ``<path>.tmp`` then ``os.replace``) so a crash mid-write
+    never corrupts the file. On disk the store is ``{collection: {page_id: record}}``;
+    the per-collection content-hash index is derived on load and kept in memory
+    (claims are transient and intentionally not persisted).
 
     Args:
         path: Path to the JSON file. Created on first write if absent.
     """
 
     def __init__(self, path: str) -> None:
+        super().__init__()
         self._path = path
-        self._store: Dict[str, Dict[str, Any]] = {}
-        self._hash_index: Dict[str, str] = {}
-        self._lock = threading.Lock()
         self._load()
 
     def _load(self) -> None:
-        if os.path.exists(self._path):
-            with open(self._path, "r", encoding="utf-8") as fh:
-                content = fh.read().strip()
-            if content:
-                self._store = json.loads(content)
-        self._hash_index = {
-            rec["content_hash"]: page_id
-            for page_id, rec in self._store.items()
-            if "content_hash" in rec
-        }
+        if not os.path.exists(self._path):
+            return
+        with open(self._path, "r", encoding="utf-8") as fh:
+            content = fh.read().strip()
+        if not content:
+            return
+        data = json.loads(content)
+        # Legacy format was flat ``{page_id: record}`` with no collection. The
+        # collection cannot be recovered, so discard it — freshness is a cache and
+        # pages are simply re-ingested once into the new per-collection layout.
+        if isinstance(data, dict) and any(
+            isinstance(v, dict) and ("content_hash" in v or "url" in v)
+            for v in data.values()
+        ):
+            return
+        self._store = data
+        self._rebuild_hash_index()
 
-    def _save(self) -> None:
+    def _persist(self) -> None:
         tmp = self._path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(self._store, fh, indent=2, ensure_ascii=False)
         os.replace(tmp, self._path)
-
-    def get(self, page_id: str) -> Optional[Dict[str, Any]]:
-        with self._lock:
-            return self._store.get(page_id)
-
-    def get_by_content_hash(self, content_hash: str) -> Optional[Dict[str, Any]]:
-        with self._lock:
-            page_id = self._hash_index.get(content_hash)
-            return self._store.get(page_id) if page_id else None
-
-    def set(self, page_id: str, record: Dict[str, Any]) -> None:
-        with self._lock:
-            old = self._store.get(page_id)
-            if old and "content_hash" in old:
-                self._hash_index.pop(old["content_hash"], None)
-            if "content_hash" in record:
-                self._hash_index[record["content_hash"]] = page_id
-            self._store[page_id] = record
-            self._save()
-
-    def delete(self, page_id: str) -> None:
-        with self._lock:
-            old = self._store.pop(page_id, None)
-            if old and "content_hash" in old:
-                self._hash_index.pop(old["content_hash"], None)
-            if old is not None:
-                self._save()
