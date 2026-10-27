@@ -53,10 +53,14 @@ class WebCrawler:
         fetcher: WebFetcher reused for link-discovery fetches.
         same_domain_only: When True (default) only follow links within the
             seed URL's domain.
-        respect_robots: When True (default) skip URLs disallowed by the
-            site's robots.txt. Caches parsed robots.txt per domain for the
-            duration of the crawl. Falls back to allow-all when robots.txt
-            is unreachable.
+        respect_robots: When True (default) skip discovered links disallowed by
+            the site's robots.txt. robots.txt is fetched through the same
+            ``WebFetcher`` as pages, so it uses the crawler's User-Agent and
+            configured timeout; it is cached per domain for the crawl. Falls back
+            to allow-all when robots.txt is unreachable, times out, or returns a
+            non-2xx status (e.g. a CDN 403, or a 404 meaning "no robots"). The seed
+            URL is always crawled regardless of robots.txt (the caller asked for it
+            explicitly; see design/06); only discovered links are filtered.
         crawl_delay: Minimum seconds between requests to the same domain.
             The Crawl-delay directive from robots.txt is honoured when it
             exceeds this value.
@@ -102,10 +106,19 @@ class WebCrawler:
             if domain in self._robots_cache:
                 return self._robots_cache[domain]
         robots_url = f"{parsed.scheme}://{domain}/robots.txt"
-        rp = RobotFileParser(robots_url)
+        rp: Optional[RobotFileParser] = RobotFileParser()
+        rp.set_url(robots_url)
         try:
-            rp.read()
+            # Fetch robots.txt through WebFetcher so it uses the crawler's own
+            # User-Agent and configured timeout — not urllib's generic agent with no
+            # timeout (#48). A never-answering robots.txt now times out instead of
+            # hanging the crawl, and a CDN that 403s a generic agent no longer blocks
+            # the whole site.
+            result = self._fetcher.fetch(robots_url)
+            rp.parse(result.html.splitlines())
         except Exception:
+            # Unreachable, timed out, or any non-2xx (a 404 "no robots", or a CDN
+            # 401/403): fall back to allow-all, as the crawler contract documents.
             rp = None
         with self._robots_cache_lock:
             if domain not in self._robots_cache:
@@ -206,7 +219,11 @@ class WebCrawler:
             if not current_level or fetch_count >= max_pages:
                 break
 
-            # Filter to eligible URLs for this level, respecting max_pages cap
+            # Filter to eligible URLs for this level, respecting max_pages cap.
+            # The seed (depth 0) is exempt from the robots allow-check: the caller
+            # asked for it explicitly and design/06 documents it as always ingested.
+            # Discovered links (depth >= 1) still respect robots.txt (#48).
+            is_seed_level = current_depth == 0
             to_process: List[str] = []
             for url in current_level:
                 if fetch_count + len(to_process) >= max_pages:
@@ -215,7 +232,7 @@ class WebCrawler:
                     continue
                 if self._same_domain_only and not _same_domain(url, seed_netloc):
                     continue
-                if not self._is_allowed(url):
+                if not is_seed_level and not self._is_allowed(url):
                     continue
                 to_process.append(url)
 
