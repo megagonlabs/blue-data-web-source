@@ -518,3 +518,85 @@ def test_crawler_multi_worker_respects_max_pages():
     crawler.crawl(_BASE + "/", depth=1, max_pages=2)
 
     assert pipeline.ingest.call_count <= 2
+
+
+# ---------------------------------------------------------------------------
+# #52: seed-redirect scope and max_pages counting
+# ---------------------------------------------------------------------------
+
+def _redirect_fetcher(responses: dict):
+    """Fetcher whose responses may redirect: url -> (final_url, html)."""
+    mock = MagicMock()
+
+    def _fetch(url):
+        if url not in responses:
+            raise ValueError(f"No fixture for {url}")
+        final_url, html = responses[url]
+        return FetchResult(url=url, final_url=final_url, html=html,
+                           status_code=200, content_type="text/html")
+
+    mock.fetch.side_effect = _fetch
+    return mock
+
+
+def test_crawl_scope_follows_seed_redirect_to_canonical_host():
+    # Seed is on an alias host that 30x-redirects to the canonical host; links on
+    # the canonical page must stay in scope with same_domain_only=True (#52).
+    alias = "https://alias.example.com"
+    home = ('<html><body><article><p>home</p>'
+            '<a href="/docs/1">1</a><a href="/docs/2">2</a><a href="/docs/3">3</a>'
+            '</article></body></html>')
+    doc = "<html><body><article><p>doc</p></article></body></html>"
+    responses = {
+        alias + "/start": (_BASE + "/", home),      # seed resolves alias → canonical
+        _BASE + "/docs/1": (_BASE + "/docs/1", doc),
+        _BASE + "/docs/2": (_BASE + "/docs/2", doc),
+        _BASE + "/docs/3": (_BASE + "/docs/3", doc),
+    }
+    pipeline = _make_pipeline()
+    crawler = WebCrawler(pipeline=pipeline, fetcher=_redirect_fetcher(responses),
+                         same_domain_only=True, respect_robots=False,
+                         crawl_delay=0, max_retries=0)
+    crawler.crawl(alias + "/start", depth=1, max_pages=10)
+
+    ingested = {c.args[0] for c in pipeline.ingest.call_args_list}
+    assert ingested == {alias + "/start", _BASE + "/docs/1", _BASE + "/docs/2", _BASE + "/docs/3"}
+
+
+def test_crawl_max_pages_counts_only_imported_pages():
+    # Home lists 3 dead links before 3 live docs; with max_pages=4 the dead links
+    # must be skipped without consuming the budget (#52).
+    home = ('<html><body><article><p>home</p>'
+            + "".join(f'<a href="/{p}">x</a>'
+                      for p in ("dead/1", "dead/2", "dead/3", "docs/1", "docs/2", "docs/3"))
+            + '</article></body></html>')
+    doc = "<html><body><article><p>doc</p></article></body></html>"
+    url_map = {
+        _BASE + "/": home,
+        _BASE + "/docs/1": doc, _BASE + "/docs/2": doc, _BASE + "/docs/3": doc,
+        # /dead/* are absent → fetch fails → they must not count toward max_pages
+    }
+    pipeline = _make_pipeline()
+    crawler = WebCrawler(pipeline=pipeline, fetcher=_make_fetcher(url_map),
+                         same_domain_only=True, respect_robots=False,
+                         crawl_delay=0, max_retries=0)
+    chunks = crawler.crawl(_BASE + "/", depth=1, max_pages=4)
+
+    assert {c["url"] for c in chunks} == {
+        _BASE + "/", _BASE + "/docs/1", _BASE + "/docs/2", _BASE + "/docs/3",
+    }
+
+
+def test_crawl_max_attempts_bounds_dead_link_fetches():
+    # A page of dead links must not fetch forever: max_attempts caps total fetches.
+    home = ('<html><body><article><p>home</p>'
+            + "".join(f'<a href="/dead/{i}">x</a>' for i in range(50))
+            + '</article></body></html>')
+    pipeline = _make_pipeline()
+    fetcher = _make_fetcher({_BASE + "/": home})  # every /dead/* 404s
+    crawler = WebCrawler(pipeline=pipeline, fetcher=fetcher, same_domain_only=True,
+                         respect_robots=False, crawl_delay=0, max_retries=0)
+    crawler.crawl(_BASE + "/", depth=1, max_pages=4, max_attempts=10)
+
+    # seed + at most (max_attempts - 1) dead-link attempts, never all 50.
+    assert fetcher.fetch.call_count <= 10

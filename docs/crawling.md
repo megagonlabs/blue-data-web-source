@@ -30,8 +30,9 @@ Returns a flat `list[dict]` — all `WebChunkRecord` dicts from all ingested pag
 |---|---|---|
 | `url` | required | Seed URL — crawl starts here |
 | `depth` | `1` | Maximum hops from the seed. `0` = seed page only, `1` = seed + its linked pages, `2` = seed + links + links-of-links |
-| `max_pages` | `10` | Hard cap on total pages fetched regardless of depth. Crawl stops when reached |
-| `same_domain_only` | `True` | When `True`, only follows links within the seed URL's domain (`netloc`) |
+| `max_pages` | `10` | Max pages to **import** (that yield chunks), regardless of depth. Fetches that 404, time out, or extract nothing do not count toward it |
+| `max_attempts` | `max_pages × 10` | Hard cap on fetch attempts, bounding how many dead links the crawl chases while reaching `max_pages` imports |
+| `same_domain_only` | `True` | When `True`, only follows links on the host the seed **resolves to** (after redirects); the original seed host is also kept in scope |
 | `collection` | pipeline default | Collection to ingest into |
 | `max_workers` | `10` | Thread pool size for concurrent fetching within each BFS level; set via `BLUE_WEB_MAX_WORKERS` env var or `WebDataSource(max_workers=N)` |
 
@@ -42,12 +43,17 @@ The crawler uses a queue-based BFS:
 1. Enqueue the seed URL at depth 0
 2. Fetch the page; extract all `<a href>` links
 3. Normalise each link (resolve relative URLs, strip fragments)
-4. If `same_domain_only=True`, discard links whose `netloc` differs from the seed
+4. If `same_domain_only=True`, discard links whose `netloc` is not in scope. Scope is
+   the host the seed resolves to after redirects (plus the original seed host), so a
+   seed that redirects apex → www or to an alias host still crawls the resolved site
 5. Enqueue unseen links at `depth + 1` if `depth + 1 ≤ max_depth`
 6. Ingest the fetched page through `WebPipeline` using the already-fetched HTML (no double fetch)
-7. Repeat until queue is empty or `max_pages` is reached
+7. Repeat until the queue is empty, `max_pages` imports are reached, or `max_attempts` fetches are made
 
-`max_pages` is checked before fetching each page — the crawler stops as soon as the cap is hit, even if there are pages remaining in the queue at the current depth.
+Only pages that successfully import count toward `max_pages`, so a handful of dead
+links ahead of live ones no longer exhausts the budget; `max_attempts` bounds the
+total fetches so an all-dead-links page can't loop forever. The seed URL is always
+crawled regardless of robots.txt (see [features](features.md)).
 
 ### URL normalisation
 

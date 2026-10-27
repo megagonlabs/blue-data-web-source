@@ -37,8 +37,10 @@ def _normalise(url: str) -> str:
     return parsed._replace(fragment="").geturl()
 
 
-def _same_domain(url: str, seed_netloc: str) -> bool:
-    return urlparse(url).netloc == seed_netloc
+def _in_scope(url: str, netlocs: Set[str]) -> bool:
+    """True if *url*'s host is one of the in-scope *netlocs* — the seed host and the
+    host it resolves to after redirects (#52)."""
+    return urlparse(url).netloc in netlocs
 
 
 def _is_http(url: str) -> bool:
@@ -175,18 +177,23 @@ class WebCrawler:
         url: str,
         collection: Optional[str],
         extract_links: bool,
-    ) -> Tuple[List[dict], List[str]]:
-        """Fetch one URL, ingest it, and optionally extract outbound links."""
+    ) -> Tuple[List[dict], List[str], Optional[str]]:
+        """Fetch one URL, ingest it, and optionally extract outbound links.
+
+        Returns ``(chunks, outbound_links, final_url)``. ``final_url`` is the
+        post-redirect URL (``None`` when the fetch failed) — the crawl scopes
+        same-domain filtering to the host the seed actually resolves to (#52).
+        """
         fetch_result = self._fetch_page(url)
         if fetch_result is None:
-            return [], []
+            return [], [], None
         chunks = self._pipeline.ingest(url, collection=collection, _fetch_result=fetch_result)
         links: List[str] = []
         if extract_links:
             extractor = _LinkExtractor(fetch_result.final_url)
             extractor.feed(fetch_result.html)
             links = extractor.links
-        return chunks, links
+        return chunks, links, fetch_result.final_url
 
     def crawl(
         self,
@@ -194,6 +201,7 @@ class WebCrawler:
         depth: int = 1,
         max_pages: int = 10,
         collection: str | None = None,
+        max_attempts: int | None = None,
     ) -> List[dict]:
         """Crawl from *seed_url* and return a flat list of all ingested chunks.
 
@@ -204,60 +212,87 @@ class WebCrawler:
         Args:
             seed_url: Starting URL.
             depth: How many link-hops to follow (0 = seed only, 1 = seed + its links, …).
-            max_pages: Hard cap on the total number of pages fetched (robots-filtered
-                pages do not count toward this limit).
+            max_pages: Maximum number of pages to successfully **import**. Only pages
+                that yield chunks count toward it — a fetch that 404s, times out, or
+                extracts no content does not consume the budget, so a few dead links
+                no longer starve the crawl (#52).
             collection: Vector store collection to upsert into.
+            max_attempts: Hard cap on fetch attempts, bounding how many dead links the
+                crawl will chase while trying to reach ``max_pages`` imports. Defaults
+                to ``max_pages * 10``.
+
+        Same-domain scope follows the host the seed actually *resolves* to: if the
+        seed redirects (apex → www, http → https, or an alias host), links on the
+        resolved host stay in scope. The original seed host is kept in scope too (#52).
         """
-        seed_netloc = urlparse(seed_url).netloc
+        if max_attempts is None:
+            max_attempts = max_pages * 10
+
+        # In-scope hosts: the seed host, plus whatever host the seed resolves to after
+        # redirects (added once the seed has been fetched).
+        allowed_netlocs: Set[str] = {urlparse(seed_url).netloc}
         seen: Set[str] = {_normalise(seed_url)}
-        fetch_count = 0
+        ingested = 0
+        attempts = 0
         all_chunks: List[dict] = []
 
         current_level = [seed_url]
 
         for current_depth in range(depth + 1):
-            if not current_level or fetch_count >= max_pages:
+            if not current_level or ingested >= max_pages or attempts >= max_attempts:
                 break
 
-            # Filter to eligible URLs for this level, respecting max_pages cap.
             # The seed (depth 0) is exempt from the robots allow-check: the caller
             # asked for it explicitly and design/06 documents it as always ingested.
             # Discovered links (depth >= 1) still respect robots.txt (#48).
             is_seed_level = current_depth == 0
-            to_process: List[str] = []
+            eligible: List[str] = []
             for url in current_level:
-                if fetch_count + len(to_process) >= max_pages:
-                    break
                 if not _is_http(url):
                     continue
-                if self._same_domain_only and not _same_domain(url, seed_netloc):
+                if self._same_domain_only and not _in_scope(url, allowed_netlocs):
                     continue
                 if not is_seed_level and not self._is_allowed(url):
                     continue
-                to_process.append(url)
+                eligible.append(url)
 
-            if not to_process:
+            if not eligible:
                 break
 
-            fetch_count += len(to_process)
             extract_links = current_depth < depth
             next_level_links: List[str] = []
+            queue = deque(eligible)
 
-            workers = min(self._max_workers, len(to_process))
-            with ThreadPoolExecutor(max_workers=workers) as executor:
-                futures = {
-                    executor.submit(self._process_url, url, collection, extract_links): url
-                    for url in to_process
-                }
-                for future in as_completed(futures):
-                    try:
-                        chunks, links = future.result()
-                        all_chunks.extend(chunks)
+            # Drain this level in budget-sized batches. Only pages that actually
+            # import (produce chunks) count toward max_pages, so failed fetches are
+            # skipped over rather than consuming page slots (#52); total fetches stay
+            # bounded by max_attempts so endless dead links can't hang the crawl.
+            while queue and ingested < max_pages and attempts < max_attempts:
+                batch_size = min(max_pages - ingested, max_attempts - attempts, len(queue))
+                batch = [queue.popleft() for _ in range(batch_size)]
+                attempts += len(batch)
+
+                workers = min(self._max_workers, len(batch))
+                with ThreadPoolExecutor(max_workers=workers) as executor:
+                    futures = {
+                        executor.submit(self._process_url, url, collection, extract_links): url
+                        for url in batch
+                    }
+                    for future in as_completed(futures):
+                        try:
+                            chunks, links, final_url = future.result()
+                        except Exception:
+                            continue
+                        if chunks:
+                            ingested += 1
+                            all_chunks.extend(chunks)
                         next_level_links.extend(links)
-                    except Exception:
-                        pass
+                        # Once the seed is fetched, add the host it resolved to so its
+                        # (canonical-host) links are kept in scope at the next depth.
+                        if is_seed_level and final_url:
+                            allowed_netlocs.add(urlparse(final_url).netloc)
 
-            # Build the next level from discovered links, preserving BFS order
+            # Build the next level from discovered links, preserving BFS order.
             current_level = []
             for link in next_level_links:
                 normalised = _normalise(link)

@@ -394,6 +394,7 @@ class WebDataSource(DataSource):
             depth=request.get("depth", 1),
             max_pages=request.get("max_pages", 10),
             collection=collection,
+            max_attempts=request.get("max_attempts"),
         )
 
     def _search_web(self, request: Dict[str, Any], collection_override=None) -> List[Dict[str, Any]]:
