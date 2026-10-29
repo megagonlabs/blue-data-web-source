@@ -295,10 +295,11 @@ def test_extract_import_error_when_doc_source_missing():
 
 # ── from_env() freshness-store configuration (#32 follow-up) ──────────────────
 #
-# The CLI, REST API, and MCP server all build their source via from_env(). Before
-# this change from_env() configured no freshness store, so those surfaces could
-# not delete stale surplus chunks when a page shrank. from_env() now defaults to a
-# persistent FileFreshnessStore.
+# The CLI, REST API, and MCP server all build their source via from_env(). It
+# configures a freshness store so those surfaces skip re-embedding unchanged pages
+# and delete stale surplus chunks when a page shrinks (#32). The freshness store's
+# persistence is paired to the vector store's: in-memory vectors → in-memory
+# freshness (#94), persistent (Redis) vectors → file freshness.
 
 import os
 
@@ -312,7 +313,18 @@ def _clear_freshness_env(monkeypatch):
     yield
 
 
-def test_from_env_defaults_to_file_freshness_store(monkeypatch, tmp_path):
+def test_from_env_defaults_to_memory_freshness_with_memory_vectors(monkeypatch):
+    # #94: the default config (no Redis) uses an in-memory vector store, so the
+    # freshness store must be in-memory too — a persistent freshness store would,
+    # after a restart, skip re-ingesting a known page while its vectors are gone.
+    source = WebDataSource.from_env()
+    assert type(source._pipeline._vector_source).__name__ == "MemoryVectorSource"
+    assert isinstance(source._pipeline._freshness_store, MemoryFreshnessStore)
+
+
+def test_from_env_uses_file_freshness_with_redis_vectors(monkeypatch, tmp_path):
+    # With a persistent (Redis) vector store, freshness stays file-backed.
+    monkeypatch.setenv("BLUE_WEB_REDIS_HOST", "localhost")
     path = tmp_path / "freshness.json"
     monkeypatch.setenv("BLUE_WEB_FRESHNESS_PATH", str(path))
     source = WebDataSource.from_env()
@@ -321,9 +333,9 @@ def test_from_env_defaults_to_file_freshness_store(monkeypatch, tmp_path):
     assert store._path == str(path)
 
 
-def test_from_env_default_path_under_home(monkeypatch, tmp_path):
-    # No BLUE_WEB_FRESHNESS_PATH → default ~/.blue-web/freshness.json, and the
-    # parent directory is created so the first ingest's write cannot crash.
+def test_from_env_explicit_file_freshness_overrides_pairing(monkeypatch, tmp_path):
+    # An explicit BLUE_WEB_FRESHNESS always wins, even with memory vectors.
+    monkeypatch.setenv("BLUE_WEB_FRESHNESS", "file")
     monkeypatch.setenv("HOME", str(tmp_path))
     source = WebDataSource.from_env()
     store = source._pipeline._freshness_store
@@ -345,6 +357,7 @@ def test_from_env_freshness_memory(monkeypatch):
 
 
 def test_from_env_file_store_creates_missing_parent_dirs(monkeypatch, tmp_path):
+    monkeypatch.setenv("BLUE_WEB_FRESHNESS", "file")
     path = tmp_path / "nested" / "dir" / "freshness.json"
     monkeypatch.setenv("BLUE_WEB_FRESHNESS_PATH", str(path))
     source = WebDataSource.from_env()
@@ -355,6 +368,7 @@ def test_from_env_file_store_creates_missing_parent_dirs(monkeypatch, tmp_path):
 def test_from_env_file_store_falls_back_to_memory_when_unwritable(monkeypatch, tmp_path):
     # Point at a path whose parent cannot be created (a file is in the way), so
     # makedirs raises OSError — from_env must not crash; it degrades to memory.
+    monkeypatch.setenv("BLUE_WEB_FRESHNESS", "file")
     blocker = tmp_path / "blocker"
     blocker.write_text("not a directory")
     monkeypatch.setenv("BLUE_WEB_FRESHNESS_PATH", str(blocker / "freshness.json"))

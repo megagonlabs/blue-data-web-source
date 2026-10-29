@@ -273,10 +273,6 @@ class WebDataSource(DataSource):
         props: Dict[str, Any] = {
             "embedding": os.getenv("BLUE_WEB_EMBEDDING", "dummy").lower(),
             "enricher": os.getenv("BLUE_WEB_ENRICHER", "basic").lower(),
-            # A freshness store is configured by default (``file``) so the CLI, REST
-            # API and MCP server skip re-embedding unchanged pages and, crucially,
-            # delete stale surplus chunks when a page shrinks on re-ingest (#32).
-            "freshness": os.getenv("BLUE_WEB_FRESHNESS", "file").lower(),
             "collection": os.getenv("BLUE_WEB_COLLECTION", "web"),
             "chunk_size": int(os.getenv("BLUE_WEB_CHUNK_SIZE", "1000")),
             "overlap": int(os.getenv("BLUE_WEB_OVERLAP", "150")),
@@ -301,6 +297,15 @@ class WebDataSource(DataSource):
             # No Redis configured — fall back to an in-memory vector store so the
             # source is still searchable (data is lost on restart), as documented.
             props["vector"] = "memory"
+
+        # Default the freshness store to the vector store's volatility. A persistent
+        # (file) freshness store paired with an in-memory vector store would, after a
+        # restart, skip re-ingesting a known-unchanged page while its vectors are gone
+        # — leaving it permanently unsearchable (#94). So with an in-memory vector
+        # store, default freshness to memory too; with a persistent (Redis) vector
+        # store it stays file-backed. An explicit BLUE_WEB_FRESHNESS always wins.
+        default_freshness = "memory" if props["vector"] == "memory" else "file"
+        props["freshness"] = os.getenv("BLUE_WEB_FRESHNESS", default_freshness).lower()
 
         freshness_path = os.getenv("BLUE_WEB_FRESHNESS_PATH")
         if freshness_path:
