@@ -14,7 +14,7 @@ All three are declared as `dev` dependencies. CI fails on any lint, type, or tes
 
 ## Python Version and Annotations
 
-- Minimum Python: **3.10**
+- Supported Python: **3.12 and 3.13** (`requires-python = ">=3.12,<3.14"`)
 - All files begin with `from __future__ import annotations` to enable PEP 604 union syntax (`X | Y`) and postponed annotation evaluation in ABCs.
 
 ---
@@ -24,7 +24,7 @@ All three are declared as `dev` dependencies. CI fails on any lint, type, or tes
 ```toml
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]

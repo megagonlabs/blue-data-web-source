@@ -64,7 +64,7 @@ BLUE_WEB_REDIS_HOST=localhost BLUE_WEB_EMBEDDING=openai OPENAI_API_KEY=sk-... \
 ### Docker
 
 ```dockerfile
-FROM python:3.10-slim
+FROM python:3.12-slim
 WORKDIR /app
 COPY . .
 RUN pip install -e "lib/[openai]" && pip install -e "platform/web-api/"

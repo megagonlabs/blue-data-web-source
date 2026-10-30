@@ -43,7 +43,7 @@ blue-data-web-source/
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.12 or 3.13
 - Sibling repos cloned beside this one: [`blue-data`](../blue-data) and [`blue-data-doc-source`](../blue-data-doc-source)
 - API keys, as needed for the features you use:
 

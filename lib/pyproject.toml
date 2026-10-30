@@ -12,7 +12,7 @@ authors = [
 maintainers = [
     {name = "Jalal Mahmud", email = "contact_oss@megagon.ai"},
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     # Sibling packages are installed editable from their own lib/ dirs (see
     # scripts/install.sh / docs/installation.md). Plain requirements are used

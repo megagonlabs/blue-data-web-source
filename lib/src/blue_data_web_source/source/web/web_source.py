@@ -60,6 +60,25 @@ class WebDataSource(DataSource):
         results = source.execute_query_nl("search for climate policy articles")
     """
 
+    # Every op is in exactly one of these sets. blue-data's registry refuses an
+    # op without ``optional_properties={"commit": True}`` unless it is a read
+    # (#106). WEB.SEARCH_WEB is a write: it ingests the pages it fetches.
+    _WRITE_OPS = frozenset({
+        "WEB.INGEST",
+        "WEB.INGEST_FEED",
+        "WEB.CRAWL",
+        "WEB.SEARCH_WEB",
+        "WEB.ENSURE_INDEX",
+    })
+    _READ_OPS = frozenset({
+        "WEB.SEARCH",
+        "WEB.EXTRACT",
+        "WEB.FIND",
+        "WEB.FIND_THEN_SEARCH",
+        "WEB.GRAPH_NEIGHBORS",
+        "WEB.GRAPH_QUERY",
+    })
+
     def __init__(
         self,
         name: str = "web",

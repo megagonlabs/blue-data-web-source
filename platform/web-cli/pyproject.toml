@@ -12,7 +12,7 @@ authors = [
 maintainers = [
     {name = "Jalal Mahmud", email = "contact_oss@megagon.ai"},
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "blue-data-web-source>=1.0.0",
     "click>=8.0",
