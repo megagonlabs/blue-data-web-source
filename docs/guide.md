@@ -169,8 +169,9 @@ source = WebDataSource(
 source.execute_query({"op": "WEB.ENSURE_INDEX"})
 
 results = source.execute_query_nl("find articles about China's missile tests")
-records = source.execute_query_nl("ingest https://text.npr.org/nx-s1-5884537 into the news collection")
-pages   = source.execute_query_nl("crawl https://docs.example.com up to depth 2, max 20 pages")
+# Writes (ingest, crawl, feeds, live search, index) need read_only=False.
+records = source.execute_query_nl("ingest https://text.npr.org/nx-s1-5884537 into the news collection", read_only=False)
+pages   = source.execute_query_nl("crawl https://docs.example.com up to depth 2, max 20 pages", read_only=False)
 ```
 
 Requires `pip install 'blue-data-web-source[llm]'` and `ANTHROPIC_API_KEY`.

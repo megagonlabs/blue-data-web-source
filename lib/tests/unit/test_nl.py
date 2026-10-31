@@ -1,4 +1,7 @@
 """Unit tests for NLQueryParser and WebDataSource.execute_query_nl."""
+import http.server
+import json
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -237,7 +240,7 @@ def test_execute_query_nl_dispatches_ingest():
     mock_parser.parse.return_value = {"op": "WEB.INGEST", "url": "https://example.com"}
     source._nl_parser = mock_parser
 
-    result = source.execute_query_nl("ingest https://example.com")
+    result = source.execute_query_nl("ingest https://example.com", read_only=False)
 
     source._pipeline.ingest.assert_called_once_with("https://example.com", collection=None)
     assert result == [{"chunk_id": "abc"}]
@@ -251,7 +254,7 @@ def test_execute_query_nl_passes_collection_override():
     mock_parser.parse.return_value = {"op": "WEB.INGEST", "url": "https://example.com"}
     source._nl_parser = mock_parser
 
-    source.execute_query_nl("ingest https://example.com", collection="news")
+    source.execute_query_nl("ingest https://example.com", collection="news", read_only=False)
 
     source._pipeline.ingest.assert_called_once_with("https://example.com", collection="news")
 
@@ -264,7 +267,7 @@ def test_execute_query_nl_creates_parser_lazily():
     mock_parser.parse.return_value = {"op": "WEB.ENSURE_INDEX"}
     source._nl_parser = mock_parser
 
-    source.execute_query_nl("create index")
+    source.execute_query_nl("create index", read_only=False)
     assert source._nl_parser is mock_parser
 
 
@@ -280,7 +283,7 @@ def test_execute_query_nl_dispatches_crawl():
     source._nl_parser = mock_parser
     source._crawl = MagicMock(return_value=[{"chunk_id": "x"}])
 
-    result = source.execute_query_nl("crawl the docs site at docs.example.com")
+    result = source.execute_query_nl("crawl the docs site at docs.example.com", read_only=False)
 
     mock_parser.parse.assert_called_once_with("crawl the docs site at docs.example.com")
     source._crawl.assert_called_once()
@@ -301,7 +304,7 @@ def test_execute_query_nl_dispatches_search_web():
     mock_parser.parse.return_value = {"op": "WEB.SEARCH_WEB", "query": "latest climate news", "k": 3}
     source._nl_parser = mock_parser
 
-    result = source.execute_query_nl("find me the latest climate news")
+    result = source.execute_query_nl("find me the latest climate news", read_only=False)
 
     mock_parser.parse.assert_called_once_with("find me the latest climate news")
     source._search_provider.search.assert_called_once_with("latest climate news", k=3)
@@ -375,3 +378,62 @@ def test_execute_query_nl_registry_signature_with_llm_fn():
     )
     source._pipeline.search.assert_called_once_with("tides", k=2, collection="web")
     assert result == [{"chunk_id": "c1"}]
+
+
+# ---------------------------------------------------------------------------
+# #95: read_only (the default) refuses a translated write before it runs
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def loopback_page():
+    """A throwaway HTTP server on 127.0.0.1 that records the paths it is asked for."""
+    hits = []
+
+    class Page(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            hits.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(
+                b"<html><body><article><p>Placeholder page about garden snails for this test.</p>"
+                b"</article></body></html>"
+            )
+
+        def log_message(self, *args):
+            pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Page)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{srv.server_port}/snails", hits
+    srv.shutdown()
+    srv.server_close()
+
+
+def _ingest_llm_fn(url):
+    # What a model returns for "ingest this page".
+    return lambda prompt: json.dumps({"name": "ingest_url", "input": {"url": url}})
+
+
+def _memory_source():
+    source = WebDataSource(properties={"embedding": "dummy", "vector": "memory", "freshness": "none"})
+    source.execute_query({"op": "WEB.ENSURE_INDEX"})
+    return source
+
+
+def test_execute_query_nl_read_only_refuses_translated_write(loopback_page):
+    url, hits = loopback_page
+    source = _memory_source()
+    with pytest.raises(ValueError, match="write operation"):
+        source.execute_query_nl("what do I have about snails?", llm_fn=_ingest_llm_fn(url))
+    assert hits == []
+    assert source.execute_query({"op": "WEB.SEARCH", "query": "snails", "k": 1}) == []
+
+
+def test_execute_query_nl_runs_translated_write_when_not_read_only(loopback_page):
+    url, hits = loopback_page
+    source = _memory_source()
+    out = source.execute_query_nl("ingest the snails page", llm_fn=_ingest_llm_fn(url), read_only=False)
+    assert out
+    assert hits == ["/snails"]
+    assert len(source.execute_query({"op": "WEB.SEARCH", "query": "snails", "k": 1})) == 1

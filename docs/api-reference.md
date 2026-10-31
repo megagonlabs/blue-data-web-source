@@ -58,7 +58,7 @@ Dispatch on `query["op"]`. See op codes below.
 def execute_query_nl(self, text: str, ...) -> Any
 ```
 
-Parse a natural-language instruction via `NLQueryParser` (Claude tool use) and execute. Requires `[llm]` extra and `ANTHROPIC_API_KEY`.
+Parse a natural-language instruction via `NLQueryParser` (Claude tool use) and execute. With `read_only=True` (the default) a translated write op (any op outside `_READ_OPS`) raises `ValueError` before it runs; pass `read_only=False` to allow it. Requires `[llm]` extra and `ANTHROPIC_API_KEY`.
 
 ### Op codes
 

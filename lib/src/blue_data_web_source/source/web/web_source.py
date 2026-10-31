@@ -63,16 +63,18 @@ class WebDataSource(DataSource):
     # Every op is in exactly one of these sets. blue-data's registry refuses an
     # op without ``optional_properties={"commit": True}`` unless it is a read
     # (#106). WEB.SEARCH_WEB is a write: it ingests the pages it fetches.
+    # WEB.EXTRACT is a write too: it fetches caller-chosen URLs server-side and
+    # makes a paid model call (#110).
     _WRITE_OPS = frozenset({
         "WEB.INGEST",
         "WEB.INGEST_FEED",
         "WEB.CRAWL",
         "WEB.SEARCH_WEB",
         "WEB.ENSURE_INDEX",
+        "WEB.EXTRACT",
     })
     _READ_OPS = frozenset({
         "WEB.SEARCH",
-        "WEB.EXTRACT",
         "WEB.FIND",
         "WEB.FIND_THEN_SEARCH",
         "WEB.GRAPH_NEIGHBORS",
@@ -630,6 +632,8 @@ class WebDataSource(DataSource):
         exactly how ``DataRegistry.execute_query_nl`` invokes a source (#50). The
         translation goes through :meth:`translate_nl_to_native_query`, which uses
         ``llm_fn`` when supplied and otherwise the built-in Claude tool-use parser.
+        With *read_only* (the default) a translated write op raises ``ValueError``
+        before it runs, as in the base method (#95).
 
         Defined explicitly (rather than relying on the inherited base method) so
         it works regardless of the installed blue-data version. Returns the
@@ -638,6 +642,11 @@ class WebDataSource(DataSource):
         native_query = self.translate_nl_to_native_query(query, schema=schema, llm_fn=llm_fn)
         if not native_query:
             return []
+        if read_only and self._is_write_native_query(native_query):
+            raise ValueError(
+                "Natural-language query translated to a write operation. "
+                "Pass read_only=False to allow writes."
+            )
         props = dict(optional_properties or {})
         if read_only:
             props.pop("commit", None)

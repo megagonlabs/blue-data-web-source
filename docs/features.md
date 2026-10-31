@@ -496,8 +496,9 @@ source = WebDataSource(
 
 # NLQueryParser maps plain English to WEB.SEARCH, WEB.INGEST, WEB.ENSURE_INDEX
 results = source.execute_query_nl("find articles about offshore wind energy")
-records = source.execute_query_nl("ingest https://example.com/report")
-source.execute_query_nl("ensure the index exists for collection news")
+# read_only=True (the default) refuses a translated write with ValueError
+records = source.execute_query_nl("ingest https://example.com/report", read_only=False)
+source.execute_query_nl("ensure the index exists for collection news", read_only=False)
 ```
 
 The NL interface uses Claude tool use with `tool_choice={"type": "any"}` — a tool call is always returned, never free text. Six tools are exposed: `ingest_url`, `search`, `ensure_index`, `crawl`, `search_web`, `ingest_feed`.
