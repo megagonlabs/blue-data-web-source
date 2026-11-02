@@ -135,6 +135,18 @@ class WebPipeline:
             # False claim means another page in this collection already owns the text.
             if not self._freshness_store.claim_content_hash(effective_collection, content_hash, page_id):
                 _log.debug("duplicate content: %s (collection %r)", url, effective_collection)
+                # Another page in this collection already owns this text. If THIS
+                # page previously held its own (different) content, that old content
+                # is now stale: without cleanup its chunks, graph nodes, record and
+                # freshness entry would stay and keep search returning the superseded
+                # text indefinitely (#96). Purge them before returning. The old
+                # freshness record's content-hash claim is released by delete(), so
+                # the prior text can be ingested again elsewhere.
+                # (Recording this URL as an alias of the owning page is #34.)
+                if stored is not None and stored.get("content_hash") != content_hash:
+                    self._purge_page(
+                        effective_collection, page_id, stored.get("chunk_count", 0)
+                    )
                 return []
             claimed_hash = True
 
@@ -259,6 +271,32 @@ class WebPipeline:
                     effective_collection, content_hash, page_id
                 )
             raise
+
+    def _purge_page(self, collection: str, page_id: str, chunk_count: int) -> None:
+        """Remove all stored state for a page whose content is now stale (#96).
+
+        Deletes the page's chunks (``0..chunk_count-1``) from the vector store,
+        drops its graph document, its structured record, and its freshness entry.
+        Deleting the freshness entry also releases the page's old content-hash
+        claim (see ``_apply_delete``), so the superseded text is free to be
+        ingested again under another URL.
+
+        Used when a re-ingested page's text has become identical to another
+        page's: cross-URL dedup rejects the claim, and this page's prior chunks
+        would otherwise stay searchable forever.
+        """
+        if self._vector_source is not None:
+            for idx in range(chunk_count):
+                self._vector_source.delete(
+                    collection=collection,
+                    doc_id=f"{page_id}_chunk_{idx:04d}",
+                )
+        if self._graph_indexer is not None:
+            self._graph_indexer.delete_document(page_id)
+        if self._record_store is not None:
+            self._record_store.delete(page_id)
+        if self._freshness_store is not None:
+            self._freshness_store.delete(collection, page_id)
 
     def ingest_many(
         self,
