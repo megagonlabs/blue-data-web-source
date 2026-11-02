@@ -8,7 +8,13 @@ from blue_data_web_source.source.web.extractor import ExtractResult
 from blue_data_web_source.source.web.feed import FeedEntry, FeedParseResult
 from blue_data_web_source.source.web.fetcher import FetchResult
 from blue_data_web_source.source.web.freshness import MemoryFreshnessStore
-from blue_data_web_source.source.web.pipeline import WebPipeline
+from blue_data_web_source.source.web.pipeline import (
+    INGEST_DUPLICATE,
+    INGEST_INGESTED,
+    INGEST_NO_CONTENT,
+    INGEST_UNCHANGED,
+    WebPipeline,
+)
 
 _FEED_URL = "https://example.com/feed.xml"
 
@@ -981,3 +987,59 @@ def test_search_passes_through_flat_rows():
     assert r["url"] == "https://e.com"
     assert r["chunk_id"] == "c0"
     assert r["score"] == 0.1
+
+
+# ── ingest_result exposes the outcome, not just an empty list (#99) ───────────
+
+class TestIngestResultStatus:
+    def test_first_ingest_is_ingested(self):
+        pipeline = _make_pipeline(freshness_store=MemoryFreshnessStore())
+        result = pipeline.ingest_result("https://example.com")
+        assert result.status == INGEST_INGESTED
+        assert len(result.records) > 0
+        assert result.page_id
+
+    def test_unchanged_reingest_reports_unchanged(self):
+        pipeline = _make_pipeline(freshness_store=MemoryFreshnessStore())
+        pipeline.ingest_result("https://example.com")
+        again = pipeline.ingest_result("https://example.com")
+        assert again.status == INGEST_UNCHANGED
+        assert again.records == []
+
+    def test_no_content_reports_no_content(self):
+        pipeline = _make_pipeline(freshness_store=MemoryFreshnessStore())
+        pipeline._extractor.extract.return_value = None
+        result = pipeline.ingest_result("https://example.com")
+        assert result.status == INGEST_NO_CONTENT
+        assert result.records == []
+
+    def test_duplicate_reports_duplicate_with_owner(self):
+        store = MemoryFreshnessStore()
+        pipeline = _make_pipeline(freshness_store=store)
+
+        pipeline._fetcher.fetch.return_value = _make_fetch_result("https://a.com/x")
+        pipeline._extractor.extract.return_value = _make_extract_result(url="https://a.com/x")
+        a = pipeline.ingest_result("https://a.com/x")
+
+        pipeline._fetcher.fetch.return_value = _make_fetch_result("https://b.com/y")
+        pipeline._extractor.extract.return_value = _make_extract_result(url="https://b.com/y")
+        b = pipeline.ingest_result("https://b.com/y")
+
+        assert b.status == INGEST_DUPLICATE
+        assert b.records == []
+        assert b.duplicate_of == a.page_id  # points at the page that owns the text
+
+    def test_ingest_returns_records_unchanged_from_result(self):
+        # The thin ingest() wrapper still returns just the records.
+        pipeline = _make_pipeline(freshness_store=MemoryFreshnessStore())
+        records = pipeline.ingest("https://example.com")
+        assert isinstance(records, list) and len(records) > 0
+
+    def test_ingest_many_results_reports_each_status(self):
+        store = MemoryFreshnessStore()
+        pipeline = _make_pipeline(freshness_store=store)
+        # Prime one URL so a later re-ingest is "unchanged".
+        pipeline.ingest_result("https://example.com")
+        results = pipeline.ingest_many_results(["https://example.com"])
+        assert len(results) == 1
+        assert results[0].status == INGEST_UNCHANGED

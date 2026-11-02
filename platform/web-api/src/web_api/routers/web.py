@@ -79,27 +79,33 @@ def ingest(request: IngestRequest) -> Dict[str, Any]:
     """Fetch, extract, chunk, embed, and upsert one or more web pages.
 
     Pass ``url`` for a single page or ``urls`` for a batch. Re-ingesting an
-    unchanged URL returns an empty chunk list without re-embedding.
+    unchanged URL is reported as ``unchanged`` (a success), not an error (#99):
+    the response groups each URL by outcome (``ingested`` / ``unchanged`` /
+    ``duplicate`` / ``failed``).
     """
     if not request.url and not request.urls:
         raise HTTPException(status_code=422, detail="Provide 'url' or 'urls'")
 
     source = get_source()
-    op: Dict[str, Any] = {"op": "WEB.INGEST"}
-    if request.url:
-        op["url"] = request.url
-    else:
-        op["urls"] = request.urls
-    if request.collection:
-        op["collection"] = request.collection
+    targets = [request.url] if request.url else list(request.urls or [])
+    results = source.ingest_many_results(targets, collection=request.collection)
 
-    chunks = source.execute_query(op)
+    by_status: Dict[str, List[str]] = {
+        "ingested": [], "unchanged": [], "duplicate": [], "failed": []
+    }
+    chunk_count = 0
+    for r in results:
+        chunk_count += r["chunk_count"]
+        bucket = r["status"] if r["status"] in ("ingested", "unchanged", "duplicate") else "failed"
+        by_status[bucket].append(r["url"])
 
-    urls_ingested = sorted({c["url"] for c in chunks})
     return {
-        "chunk_count": len(chunks),
-        "pages_ingested": len(urls_ingested),
-        "urls": urls_ingested,
+        "chunk_count": chunk_count,
+        "pages_ingested": len(by_status["ingested"]),
+        "ingested": sorted(by_status["ingested"]),
+        "unchanged": sorted(by_status["unchanged"]),
+        "duplicate": sorted(by_status["duplicate"]),
+        "failed": sorted(by_status["failed"]),
         "collection": request.collection or source.default_collection,
     }
 

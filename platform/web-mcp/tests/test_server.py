@@ -108,44 +108,65 @@ def test_ensure_index_error_returns_error():
 
 # ── ingest_url ────────────────────────────────────────────────────────────────
 
+def _ingested_dict(url, n=1, page_id="web_abc12345"):
+    records = [_make_chunk(url=url, idx=i) for i in range(n)]
+    for r in records:
+        r["page_id"] = page_id
+    return {"status": "ingested", "url": url, "chunk_count": n,
+            "records": records, "page_id": page_id}
+
+
 def test_ingest_url_returns_metadata():
-    chunks = [_make_chunk(idx=i) for i in range(4)]
     source = MagicMock()
-    source.execute_query.return_value = chunks
+    source.ingest_result.return_value = _ingested_dict("https://example.com/article", n=4)
     with patch.object(_server, "_source", source):
         result = json.loads(_server.ingest_url("https://example.com/article"))
+    assert result["status"] == "ingested"
     assert result["domain"] == "example.com"
     assert result["chunk_count"] == 4
     assert result["title"] == "Test Article"
     assert "page_id" in result
-    source.execute_query.assert_called_once_with({
-        "op": "WEB.INGEST", "url": "https://example.com/article", "collection": "web"
-    })
+    source.ingest_result.assert_called_once_with(
+        "https://example.com/article", collection="web"
+    )
 
 
 def test_ingest_url_passes_collection():
-    chunks = [_make_chunk()]
     source = MagicMock()
-    source.execute_query.return_value = chunks
+    source.ingest_result.return_value = _ingested_dict("https://example.com")
     with patch.object(_server, "_source", source):
         _server.ingest_url("https://example.com", collection="news")
-    source.execute_query.assert_called_once_with({
-        "op": "WEB.INGEST", "url": "https://example.com", "collection": "news"
-    })
+    source.ingest_result.assert_called_once_with("https://example.com", collection="news")
 
 
 def test_ingest_url_no_content_returns_error():
     source = MagicMock()
-    source.execute_query.return_value = []
+    source.ingest_result.return_value = {
+        "status": "no_content", "url": "https://example.com/login",
+        "chunk_count": 0, "records": [],
+    }
     with patch.object(_server, "_source", source):
         result = json.loads(_server.ingest_url("https://example.com/login"))
     assert "error" in result
     assert "No content" in result["error"]
 
 
+def test_ingest_url_unchanged_returns_success():
+    # Re-ingesting an unchanged page is a success, not an error (#99).
+    source = MagicMock()
+    source.ingest_result.return_value = {
+        "status": "unchanged", "url": "https://example.com/u",
+        "chunk_count": 0, "records": [],
+    }
+    with patch.object(_server, "_source", source):
+        result = json.loads(_server.ingest_url("https://example.com/u"))
+    assert result["status"] == "unchanged"
+    assert "error" not in result
+
+
 def test_ingest_url_exception_returns_error():
     source = MagicMock()
-    source.execute_query.side_effect = Exception("Connection refused")
+    source.ingest_result.side_effect = Exception("Connection refused")
     with patch.object(_server, "_source", source):
         result = json.loads(_server.ingest_url("https://example.com"))
     assert "error" in result
@@ -156,26 +177,31 @@ def test_ingest_url_exception_returns_error():
 def test_ingest_urls_returns_summary():
     url_a = "https://example.com/a"
     url_b = "https://example.com/b"
-    chunks = [_make_chunk(url=url_a, idx=0), _make_chunk(url=url_a, idx=1),
-              _make_chunk(url=url_b, idx=0)]
     source = MagicMock()
-    source.execute_query.return_value = chunks
+    source.ingest_many_results.return_value = [
+        _ingested_dict(url_a, n=2), _ingested_dict(url_b, n=1),
+    ]
     with patch.object(_server, "_source", source):
         result = json.loads(_server.ingest_urls([url_a, url_b]))
     assert result["chunk_count"] == 3
-    assert result["ingested"] == 2
-    assert result["skipped"] == []
+    assert sorted(result["ingested"]) == [url_a, url_b]
+    assert result["failed"] == []
 
 
-def test_ingest_urls_reports_skipped():
-    url_a = "https://example.com/a"
-    url_b = "https://example.com/b"
-    chunks = [_make_chunk(url=url_a)]
+def test_ingest_urls_reports_outcomes_by_status():
+    # Unchanged/duplicate are not failures; only no_content/error land in 'failed' (#99).
+    url_a, url_b, url_c = "https://ex.com/a", "https://ex.com/b", "https://ex.com/c"
     source = MagicMock()
-    source.execute_query.return_value = chunks
+    source.ingest_many_results.return_value = [
+        _ingested_dict(url_a),
+        {"status": "unchanged", "url": url_b, "chunk_count": 0, "records": []},
+        {"status": "no_content", "url": url_c, "chunk_count": 0, "records": []},
+    ]
     with patch.object(_server, "_source", source):
-        result = json.loads(_server.ingest_urls([url_a, url_b]))
-    assert result["skipped"] == [url_b]
+        result = json.loads(_server.ingest_urls([url_a, url_b, url_c]))
+    assert result["ingested"] == [url_a]
+    assert result["unchanged"] == [url_b]
+    assert result["failed"] == [url_c]
 
 
 # ── crawl_site ────────────────────────────────────────────────────────────────
