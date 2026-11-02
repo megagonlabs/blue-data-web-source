@@ -693,6 +693,107 @@ def test_same_url_reingest_not_blocked_by_cross_url_dedup():
     assert second == []  # still skipped, just by the right path
 
 
+# ── A page whose content becomes a duplicate of another must drop its old state (#96) ──
+
+def test_reingest_into_duplicate_purges_old_chunks():
+    store = MemoryFreshnessStore()
+    pipeline = _reingest_pipeline(freshness_store=store, collection="web")
+
+    # Page A
+    pipeline._fetcher.fetch.return_value = _make_fetch_result("https://site-a.com/x")
+    pipeline._extractor.extract.return_value = _make_extract_result(
+        url="https://site-a.com/x", text="Shared article text. " * 30
+    )
+    pipeline._chunker.chunk_with_titles.return_value = _chunks(2)
+    pipeline.ingest("https://site-a.com/x")
+
+    # Page B with its own, different content (3 chunks)
+    pipeline._fetcher.fetch.return_value = _make_fetch_result("https://site-b.com/y")
+    pipeline._extractor.extract.return_value = _make_extract_result(
+        url="https://site-b.com/y", text="Bee's own distinct content. " * 30
+    )
+    pipeline._chunker.chunk_with_titles.return_value = _chunks(3)
+    pipeline.ingest("https://site-b.com/y")
+
+    b_pid = _page_id("https://site-b.com/y")
+    assert store.get("web", b_pid)["chunk_count"] == 3
+    pipeline._vector_source.delete.reset_mock()
+
+    # B's content now becomes identical to A's → cross-URL dedup rejects the claim.
+    pipeline._fetcher.fetch.return_value = _make_fetch_result("https://site-b.com/y")
+    pipeline._extractor.extract.return_value = _make_extract_result(
+        url="https://site-b.com/y", text="Shared article text. " * 30
+    )
+    result = pipeline.ingest("https://site-b.com/y")
+    assert result == []
+
+    # B's old chunks (all 3) are deleted from B's collection...
+    assert _deleted_ids(pipeline._vector_source) == [
+        f"{b_pid}_chunk_0000", f"{b_pid}_chunk_0001", f"{b_pid}_chunk_0002",
+    ]
+    for call in pipeline._vector_source.delete.call_args_list:
+        assert call.kwargs["collection"] == "web"
+    # ...and B's freshness record is removed (its old hash claim released).
+    assert store.get("web", b_pid) is None
+
+
+def test_reingest_into_duplicate_releases_old_hash_for_reuse():
+    # After B is deduped away, B's old text is owned by nobody, so a third URL
+    # may ingest that text fresh.
+    store = MemoryFreshnessStore()
+    pipeline = _reingest_pipeline(freshness_store=store, collection="web")
+
+    pipeline._fetcher.fetch.return_value = _make_fetch_result("https://a.com/x")
+    pipeline._extractor.extract.return_value = _make_extract_result(
+        url="https://a.com/x", text="Shared text. " * 30
+    )
+    pipeline._chunker.chunk_with_titles.return_value = _chunks(2)
+    pipeline.ingest("https://a.com/x")
+
+    pipeline._fetcher.fetch.return_value = _make_fetch_result("https://b.com/y")
+    pipeline._extractor.extract.return_value = _make_extract_result(
+        url="https://b.com/y", text="Original B text. " * 30
+    )
+    pipeline.ingest("https://b.com/y")
+
+    # B collapses onto A's text.
+    pipeline._extractor.extract.return_value = _make_extract_result(
+        url="https://b.com/y", text="Shared text. " * 30
+    )
+    pipeline.ingest("https://b.com/y")
+
+    # A third URL now carries B's *original* text — nobody owns that hash anymore.
+    pipeline._fetcher.fetch.return_value = _make_fetch_result("https://c.com/z")
+    pipeline._extractor.extract.return_value = _make_extract_result(
+        url="https://c.com/z", text="Original B text. " * 30
+    )
+    pipeline._chunker.chunk_with_titles.return_value = _chunks(2)
+    third = pipeline.ingest("https://c.com/z")
+    assert len(third) > 0
+
+
+def test_new_duplicate_page_without_prior_record_just_skips():
+    # A page that is a duplicate on its FIRST ingest has nothing to purge.
+    store = MemoryFreshnessStore()
+    pipeline = _reingest_pipeline(freshness_store=store, collection="web")
+
+    pipeline._fetcher.fetch.return_value = _make_fetch_result("https://a.com/x")
+    pipeline._extractor.extract.return_value = _make_extract_result(
+        url="https://a.com/x", text="Identical text. " * 30
+    )
+    pipeline._chunker.chunk_with_titles.return_value = _chunks(2)
+    pipeline.ingest("https://a.com/x")
+    pipeline._vector_source.delete.reset_mock()
+
+    pipeline._fetcher.fetch.return_value = _make_fetch_result("https://b.com/y")
+    pipeline._extractor.extract.return_value = _make_extract_result(
+        url="https://b.com/y", text="Identical text. " * 30
+    )
+    result = pipeline.ingest("https://b.com/y")
+    assert result == []
+    pipeline._vector_source.delete.assert_not_called()  # nothing to purge
+
+
 def test_ingest_many_single_url_behaves_like_ingest():
     pipeline = _make_pipeline()
     many = pipeline.ingest_many(["https://example.com"])
