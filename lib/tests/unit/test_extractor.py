@@ -1,6 +1,16 @@
 import pytest
 
 from blue_data_web_source.source.web.extractor import ExtractResult, WebExtractor
+from blue_data_web_source.source.web.fetcher import FetchResult
+from blue_data_web_source.source.web.pipeline import WebPipeline
+
+_SECTIONED_HTML = (
+    "<html><head><title>Guide</title></head><body><article>"
+    "<h1>Guide</h1>"
+    "<h2>Installation</h2><p>" + "Install the package with pip and configure it. " * 20 + "</p>"
+    "<h2>Usage</h2><p>" + "Call the function with arguments to run it. " * 20 + "</p>"
+    "</article></body></html>"
+)
 
 _SAMPLE_HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -140,3 +150,45 @@ def test_extract_preserves_article_body_after_stripping():
     assert result is not None
     assert "important happened" in result.text or "Breaking news" in result.text
     assert "investigation remains" in result.text or "ongoing" in result.text
+
+
+# --- Markdown headings → section_title (#97) ---
+
+def test_extract_preserves_h2_headings_as_markdown():
+    # The extractor must emit markdown so <h2> survives as "## Heading" — this is
+    # what lets SectionChunker detect sections on HTML pages (#97).
+    extractor = WebExtractor()
+    result = extractor.extract(_SECTIONED_HTML, "https://x.test/g")
+    assert result is not None
+    assert "## Installation" in result.text
+    assert "## Usage" in result.text
+
+
+def test_extract_strips_inline_emphasis_but_keeps_text():
+    html = (
+        "<html><head><title>T</title></head><body><article><h2>Notes</h2><p>"
+        "This is <b>very</b> important and <i>clearly</i> stated. " * 10
+        + "</p></article></body></html>"
+    )
+    result = WebExtractor().extract(html, "https://x.test/n")
+    assert result is not None
+    assert "**" not in result.text and "*" not in result.text  # emphasis unwrapped
+    assert "very" in result.text and "clearly" in result.text  # words kept
+    assert "## Notes" in result.text  # heading marker kept
+
+
+def test_ingest_html_sections_set_section_title():
+    # End-to-end (#97): an HTML page with <h2> sections produces chunks whose
+    # section_title is the enclosing heading, and no chunk text carries markdown
+    # heading/emphasis markers.
+    fr = FetchResult(
+        url="https://x.test/g", final_url="https://x.test/g",
+        html=_SECTIONED_HTML, status_code=200, content_type="text/html",
+    )
+    records = WebPipeline(chunk_size=50, overlap=0).ingest(
+        "https://x.test/g", _fetch_result=fr
+    )
+    titles = {r.get("section_title") for r in records}
+    assert "Installation" in titles
+    assert "Usage" in titles
+    assert all("##" not in r["text"] and "**" not in r["text"] for r in records)

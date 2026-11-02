@@ -11,14 +11,14 @@
   date     : 2026-02-20
   language : —
   desc     : Review of AlphaFold improvements and lab validation.
-  text len : 800 chars
+  text len : 813 chars
 
   ✓  No nav fragments in output
 
   First 3 non-empty lines of extracted text:
-    Advances in Protein Folding Prediction
+    # Advances in Protein Folding Prediction
     Machine learning models now predict protein 3D structures with n
-    Experimental Validation
+    ## Experimental Validation
 
   CASE: Article with inline nav fragments
   URL : https://news.example.com/tech
@@ -28,12 +28,12 @@
   date     : 2025-01-01
   language : —
   desc     : —
-  text len : 637 chars
+  text len : 642 chars
 
   ✓  No nav fragments in output
 
   First 3 non-empty lines of extracted text:
-    Semiconductor Shortage Update
+    # Semiconductor Shortage Update
     Global chip supply returned to balance in mid-2025 after a three
     Asian fabs retained a dominant market share in leading-edge node
 
@@ -51,14 +51,14 @@
   date     : 2025-01-01
   language : —
   desc     : —
-  text len : 494 chars
+  text len : 502 chars
 
   ✓  No nav fragments in output
 
   First 3 non-empty lines of extracted text:
-    Rapport sur l'Énergie Solaire
+    # Rapport sur l'Énergie Solaire
     La capacité solaire mondiale a dépassé 3 000 gigawatts en 2025, 
-    Perspectives
+    ## Perspectives
 
 
   EXTRACTOR FIELD REFERENCE
