@@ -11,8 +11,8 @@
   language: —
   desc    : Tracking global progress on energy transition.
 
-  extracted text (808 chars):
-    Energy Transition: Key Milestones
+  extracted text (814 chars):
+    # Energy Transition: Key Milestones
     Global investment in renewable energy reached $500 billion in 20
     Utility-scale solar projects accounted for 60 percent of new cap
     Government subsidies and carbon pricing mechanisms accelerated d
@@ -33,13 +33,12 @@
   language: —
   desc    : Impact of CO2 on ocean chemistry and marine life.
 
-  extracted text (697 chars):
-    Ocean Acidification: 2026 Update
+  extracted text (710 chars):
+    # Ocean Acidification: 2026 Update
     The average ocean pH has dropped from 8.2 to 8.1 over the past c
-    Biological Impacts
+    ## Biological Impacts
     Shell-forming organisms including oysters, mussels, and sea urch
-    Mitigation Research
-    Experiments with ocean alkalinity enhancement show promise for l
+    ## Mitigation Research
 
   ✓  Nav fragments stripped (none of the 6 CMS markers remain)
 

@@ -11,13 +11,15 @@
   chunk_00 : web_f43a68a0488ca21f_chunk_0000
   chunk_01 : web_f43a68a0488ca21f_chunk_0001
 
-  ✓  Ingest produced 1 chunks
+  ✓  Ingest produced 3 chunks
   ✓    web_f43a68a0488ca21f_chunk_0000
+  ✓    web_f43a68a0488ca21f_chunk_0001
+  ✓    web_f43a68a0488ca21f_chunk_0002
 
   PART 2 — Re-ingest same URL (safe idempotency)
 ────────────────────────────────────────────────────────────────────
-  ✓  First ingest : ['web_f43a68a0488ca21f_chunk_0000']
-  ✓  Second ingest: ['web_f43a68a0488ca21f_chunk_0000']
+  ✓  First ingest : ['web_f43a68a0488ca21f_chunk_0000', 'web_f43a68a0488ca21f_chunk_0001', 'web_f43a68a0488ca21f_chunk_0002']
+  ✓  Second ingest: ['web_f43a68a0488ca21f_chunk_0000', 'web_f43a68a0488ca21f_chunk_0001', 'web_f43a68a0488ca21f_chunk_0002']
   ✓  chunk_id values are identical — upsert overwrites, no duplicates
 
   PART 3 — Redirect: UTM-tracked URL → canonical URL
@@ -25,7 +27,7 @@
   Source URL (fetched) : https://tech.example.com/batteries?utm_source=newsletter
   Final URL (canonical): https://tech.example.com/batteries
 
-  ✓  Records produced: 1
+  ✓  Records produced: 3
   ✓  page_id  (actual)  : web_f43a68a0488ca21f
   ✓  page_id  (expected): web_f43a68a0488ca21f  ← sha256(final_url)
   ✓  page_id derived from final_url, not original URL

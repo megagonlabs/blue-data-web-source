@@ -30,6 +30,24 @@ def _strip_nav_fragments(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
 
 
+# Inline emphasis/code markers trafilatura leaves in markdown body text. We keep
+# the ATX heading markers (``#``) — SectionChunker needs them to detect sections
+# (#97) — but unwrap bold/italic/code so the stored chunk text reads cleanly.
+_EMPHASIS_RES = (
+    (re.compile(r"\*\*\*(.+?)\*\*\*"), r"\1"),  # ***bold italic***
+    (re.compile(r"\*\*(.+?)\*\*"), r"\1"),       # **bold**
+    (re.compile(r"\*(.+?)\*"), r"\1"),           # *italic*
+    (re.compile(r"`(.+?)`"), r"\1"),             # `code`
+)
+
+
+def _strip_markdown_emphasis(text: str) -> str:
+    """Unwrap inline emphasis/code markers, preserving heading and list markers."""
+    for pattern, repl in _EMPHASIS_RES:
+        text = pattern.sub(repl, text)
+    return text
+
+
 @dataclass
 class ExtractResult:
     url: str
@@ -43,18 +61,26 @@ class ExtractResult:
 
 class WebExtractor:
     def extract(self, html: str, url: str) -> ExtractResult | None:
+        # Markdown (not "txt") so headings survive as ``## Heading`` lines —
+        # doc-source's SectionChunker only detects markdown/numbered/ALL-CAPS/
+        # underlined headers, and trafilatura's plain-text output drops or
+        # flattens headings, so section-aware chunking never fired on HTML
+        # pages (#97). Supported by trafilatura 1.9+ and 2.x.
         text = trafilatura.extract(
             html,
             url=url,
             include_comments=False,
             include_tables=True,
-            output_format="txt",
+            output_format="markdown",
         )
         if not text:
             _log.debug("no extractable content from %s", url)
             return None
 
         text = _strip_nav_fragments(text)
+        # Unwrap inline emphasis/code so stored chunk text is clean; heading
+        # markers are preserved for the chunker.
+        text = _strip_markdown_emphasis(text)
         if not text:
             _log.debug("no content after nav-fragment stripping: %s", url)
             return None

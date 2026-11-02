@@ -24,12 +24,12 @@
 
   STEP 1 — Batch ingest (urls list)
 ────────────────────────────────────────────────────────────────────
-  ✓  Total chunks returned: 3
+  ✓  Total chunks returned: 8
 
-     1 chunks  |  climate.example.com  |  Climate Policy Report 2026
-           chunk IDs: web_cb9904393a53c312_chunk_0000 … web_cb9904393a53c312_chunk_0000
-     1 chunks  |  insurance.example.com  |  Health Insurance Policy Summary
-           chunk IDs: web_6025b6c4593d7883_chunk_0000 … web_6025b6c4593d7883_chunk_0000
+     3 chunks  |  climate.example.com  |  Climate Policy Report 2026
+           chunk IDs: web_cb9904393a53c312_chunk_0000 … web_cb9904393a53c312_chunk_0002
+     4 chunks  |  insurance.example.com  |  Health Insurance Policy Summary
+           chunk IDs: web_6025b6c4593d7883_chunk_0000 … web_6025b6c4593d7883_chunk_0003
      1 chunks  |  text.npr.org  |  China test-launches a ballistic missile in the Sou
            chunk IDs: web_a809489b601142ed_chunk_0000 … web_a809489b601142ed_chunk_0000
 
@@ -39,7 +39,7 @@
   climate.example.com
     title    : Climate Policy Report 2026
     date     : 2026-01-01
-    chunks   : 1  (index 0 … 0)
+    chunks   : 3  (index 0 … 2)
     chunk 0  : web_cb9904393a53c312_chunk_0000
     desc (c0): An overview of global climate policy developments in 2026.…
     desc on later chunks: none ✓
@@ -47,7 +47,7 @@
   insurance.example.com
     title    : Health Insurance Policy Summary
     date     : —
-    chunks   : 1  (index 0 … 0)
+    chunks   : 4  (index 0 … 3)
     chunk 0  : web_6025b6c4593d7883_chunk_0000
     desc (c0): Summary of health plan benefits and coverage details.…
     desc on later chunks: none ✓
@@ -65,19 +65,22 @@
 
   Query: "policy and government commitments"
 
-  #1  score=0.1459  text.npr.org
-       China test-launches a ballistic missile in the South Pacific and raises regional concerns By The Associated Pr…
+  #1  score=0.0780  climate.example.com  § National Commitments
+       Several major economies announced updated nationally determined contributions. The European Union pledged a 65…
 
-  #2  score=0.1553  climate.example.com
-       Climate Policy Report 2026 Global greenhouse gas emissions continued to rise in 2025 despite international agr…
+  #2  score=0.1165  insurance.example.com  § Eligibility
+       Coverage is available to full-time employees working 30 or more hours per week. Dependents including spouses a…
 
-  #3  score=0.3048  insurance.example.com
-       Health Insurance Policy Summary This policy provides comprehensive health coverage for eligible members and th…
+  #3  score=0.1369  insurance.example.com  § Prescription Drugs
+       Prescription drugs are covered under a four-tier formulary. Generic drugs carry a $10 copay. Preferred brand d…
+
+  #4  score=0.1854  insurance.example.com  § Deductible and Cost Sharing
+       The annual deductible is $1,500 per individual and $3,000 per family. After the deductible is met, the plan co…
 
   SUMMARY
 ────────────────────────────────────────────────────────────────────
   ✓  URLs ingested   : 3
-  ✓  Chunks stored   : 3
+  ✓  Chunks stored   : 8
   ✓  Batch ingest ('urls' list) ≡ N individual ingest calls
 
 ════════════════════════════════════════════════════════════════════

@@ -16,11 +16,11 @@
 
   depth=1 result
     Pages crawled : 4
-    Chunks stored : 4
+    Chunks stored : 6
        1 chunks  /  (Research Institute)
-       1 chunks  /about  (About the Institute)
+       2 chunks  /about  (About the Institute)
        1 chunks  /news  (Institute News)
-       1 chunks  /research  (Research Areas)
+       2 chunks  /research  (Research Areas)
 
   ✓  External URL 'https://external.org/partner' not crawled (same_domain_only=True)
 
@@ -29,13 +29,13 @@
 
   depth=2 result
     Pages crawled : 8
-    Chunks stored : 8
+    Chunks stored : 10
        1 chunks  /  (Research Institute)
-       1 chunks  /about  (About the Institute)
+       2 chunks  /about  (About the Institute)
        1 chunks  /news  (Institute News)
        1 chunks  /news/2026-01  (January 2026 News)
        1 chunks  /news/2026-02  (February 2026 News)
-       1 chunks  /research  (Research Areas)
+       2 chunks  /research  (Research Areas)
        1 chunks  /research/ai  (AI Research Group)
        1 chunks  /research/climate  (Climate Research Group)
 
@@ -44,10 +44,10 @@
 
   max_pages=3 result
     Pages crawled : 3
-    Chunks stored : 3
+    Chunks stored : 4
        1 chunks  /  (Research Institute)
        1 chunks  /news  (Institute News)
-       1 chunks  /research  (Research Areas)
+       2 chunks  /research  (Research Areas)
 
   ✓  Crawl stops after 3 pages regardless of remaining links in the queue
 
@@ -56,22 +56,22 @@
 
   same_domain_only=False, depth=1
     Pages crawled : 5
-    Chunks stored : 5
+    Chunks stored : 7
        1 chunks  https://external.org/partner  (Partner Organisation)
        1 chunks  /  (Research Institute)
-       1 chunks  /about  (About the Institute)
+       2 chunks  /about  (About the Institute)
        1 chunks  /news  (Institute News)
-       1 chunks  /research  (Research Areas)
+       2 chunks  /research  (Research Areas)
   ✓  External URL included: https://external.org/partner
 
   COMPARISON TABLE
 ────────────────────────────────────────────────────────────────────
   Config                               Pages  Chunks
   ─────────────────────────────────── ────── ───────
-  depth=1, max_pages=20, same_domain       4       4
-  depth=2, max_pages=20, same_domain       8       8
-  depth=2, max_pages=3,  same_domain       3       3
-  depth=1, max_pages=20, cross_domain      5       5
+  depth=1, max_pages=20, same_domain       4       6
+  depth=2, max_pages=20, same_domain       8      10
+  depth=2, max_pages=3,  same_domain       3       4
+  depth=1, max_pages=20, cross_domain      5       7
 
   Notes:
    • depth counts hops from seed (depth=1 = seed + its links)

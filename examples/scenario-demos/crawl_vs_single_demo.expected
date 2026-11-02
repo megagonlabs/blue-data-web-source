@@ -8,8 +8,8 @@
   Ingested 1 URL: https://blog.example.com/
   Chunks produced: 1
 
-    chunk 00
-           Tech Blog Welcome to our technology blog covering artificial intellige…
+    chunk 00  § Tech Blog
+           Welcome to our technology blog covering artificial intelligence, quant…
 
   Observation: only the index page is processed.
   Linked article pages are NOT followed.
@@ -18,12 +18,12 @@
 ────────────────────────────────────────────────────────────────────
   Seed URL: https://blog.example.com/
   Pages crawled: 4
-  Chunks produced: 4
+  Chunks produced: 7
 
      1 chunks  |  https://blog.example.com/  (Tech Blog)
-     1 chunks  |  https://blog.example.com/ai-trends  (AI Trends 2026)
-     1 chunks  |  https://blog.example.com/quantum  (Quantum Computing Update)
-     1 chunks  |  https://blog.example.com/robotics  (Robotics in 2026)
+     2 chunks  |  https://blog.example.com/ai-trends  (AI Trends 2026)
+     2 chunks  |  https://blog.example.com/quantum  (Quantum Computing Update)
+     2 chunks  |  https://blog.example.com/robotics  (Robotics in 2026)
 
   External domain 'https://external.example.org/news' was NOT crawled (same_domain_only=True).
 
@@ -33,7 +33,7 @@
   Approach                   Pages  Chunks
   ───────────────────────── ────── ───────
   WEB.INGEST (single URL)        1       1
-  WEB.CRAWL (depth=1)            4       4
+  WEB.CRAWL (depth=1)            4       7
 
   When to use each:
    • WEB.INGEST  — known URL, single article, or API response page
