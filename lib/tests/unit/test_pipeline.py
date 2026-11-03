@@ -1043,3 +1043,30 @@ class TestIngestResultStatus:
         results = pipeline.ingest_many_results(["https://example.com"])
         assert len(results) == 1
         assert results[0].status == INGEST_UNCHANGED
+
+    def test_ingest_many_results_preserves_input_order(self):
+        # Even when pages finish out of completion order, results come back in the
+        # input-URL order so batch ingest is deterministic (#102).
+        import time
+
+        from blue_data_web_source.source.web.pipeline import IngestResult
+
+        pipeline = _make_pipeline()
+        # Distinct hosts so the per-host politeness lock doesn't serialise them.
+        urls = [f"https://h{i}.example.com/" for i in range(6)]
+
+        def fake(url, collection=None):
+            idx = urls.index(url)
+            time.sleep((len(urls) - idx) * 0.02)  # earlier inputs finish later
+            return IngestResult(
+                INGEST_INGESTED, url,
+                records=[{"url": url, "chunk_id": f"{url}_chunk_0000"}],
+            )
+
+        pipeline.ingest_result = fake  # type: ignore[assignment]
+
+        results = pipeline.ingest_many_results(urls)
+        assert [r.url for r in results] == urls
+
+        records = pipeline.ingest_many(urls)
+        assert [r["url"] for r in records] == urls

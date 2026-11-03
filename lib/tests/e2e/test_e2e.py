@@ -150,12 +150,14 @@ def test_e2e_search_respects_k_limit(httpx_mock):
         url=_CLIMATE_URL, text=_CLIMATE_HTML, status_code=200,
         headers={"content-type": "text/html"},
     )
-    # Small chunk_size forces multiple chunks so we can test k capping
+    # Small chunk_size forces well more than k chunks so k-capping is meaningful.
+    # Kept comfortably above k (not just barely) so the test doesn't depend on the
+    # exact chunk count, which varies with the doc-source chunker (#102).
     source = WebDataSource(
         name="test",
         embedding_model=DummyEmbeddingModel(dim=8),
         vector_source=MemoryVectorSource(),
-        chunk_size=80,
+        chunk_size=40,
         overlap=10,
         default_collection="web",
     )
@@ -163,8 +165,10 @@ def test_e2e_search_respects_k_limit(httpx_mock):
     records = source.execute_query({"op": "WEB.INGEST", "url": _CLIMATE_URL})
     results = source.execute_query({"op": "WEB.SEARCH", "query": "policy", "k": 2})
 
+    # The real invariant: search never returns more than k, and there were more
+    # than k chunks ingested so the cap actually bit.
     assert len(results) <= 2
-    assert len(records) > 2  # confirms we have more chunks than k
+    assert len(records) > 2
 
 
 # ---------------------------------------------------------------------------

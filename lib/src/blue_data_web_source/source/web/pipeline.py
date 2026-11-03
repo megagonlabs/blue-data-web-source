@@ -365,7 +365,9 @@ class WebPipeline:
         """Ingest multiple URLs concurrently.
 
         Uses a thread pool sized to ``max_workers``. Pages that fail to fetch or
-        yield no content are silently skipped. Result order is not guaranteed.
+        yield no content contribute no chunks. Chunks are returned grouped by URL
+        in the **input order** of ``urls`` (fetching is still concurrent) so the
+        result is deterministic (#102).
 
         Per-domain politeness applies: URLs on the same host are processed one at
         a time (optionally spaced by ``ingest_delay``), while URLs on different
@@ -387,8 +389,9 @@ class WebPipeline:
         Like :meth:`ingest_many` but returns one :class:`IngestResult` per URL so
         callers can tell ``unchanged``/``duplicate`` skips apart from genuine
         ``no_content`` / ``error`` failures (#99). A URL that raises is captured
-        as an ``error`` result rather than silently dropped. Result order is not
-        guaranteed.
+        as an ``error`` result rather than silently dropped. Results are returned
+        in the **input order** of ``urls`` — fetching is concurrent, but each
+        result is placed at its URL's index, so the output is deterministic (#102).
 
         Per-domain politeness applies: URLs on the same host are processed one at
         a time (optionally spaced by ``ingest_delay``), while URLs on different
@@ -396,17 +399,23 @@ class WebPipeline:
         """
         if not urls:
             return []
-        results: List[IngestResult] = []
+        # One slot per input URL (indexed by position so duplicate URLs are kept
+        # distinct); as_completed fills slots out of order, but we return them in
+        # input order so the result is deterministic (#102).
+        slots: List[Optional[IngestResult]] = [None] * len(urls)
         workers = min(self._max_workers, len(urls))
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(self._ingest_result_polite, u, collection): u for u in urls}
+            futures = {
+                executor.submit(self._ingest_result_polite, u, collection): i
+                for i, u in enumerate(urls)
+            }
             for future in as_completed(futures):
-                url = futures[future]
+                i = futures[future]
                 try:
-                    results.append(future.result())
+                    slots[i] = future.result()
                 except Exception as exc:
-                    results.append(IngestResult(INGEST_ERROR, url, error=str(exc)))
-        return results
+                    slots[i] = IngestResult(INGEST_ERROR, urls[i], error=str(exc))
+        return [r for r in slots if r is not None]
 
     def _ingest_result_polite(self, url: str, collection: Optional[str]) -> IngestResult:
         """Ingest one URL while holding its per-host politeness lock."""
