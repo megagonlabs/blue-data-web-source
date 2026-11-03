@@ -72,6 +72,27 @@ Pages that fail to fetch (network error, timeout, 404, 500, etc.) are silently s
 
 Pages that extract no content (`WebExtractor` returns `None`) are also skipped silently — they contribute no chunks to the result.
 
+### Fetch destination policy (SSRF guard)
+
+Every server-side fetch — `WEB.INGEST`, `WEB.CRAWL`, `WEB.INGEST_FEED`,
+`WEB.SEARCH_WEB` and `WEB.EXTRACT`, and **each redirect hop** — is checked
+against a destination policy *after DNS resolution*. By default the server
+**refuses** hosts that resolve to loopback, private-network, link-local, or
+cloud-metadata (`169.254.169.254`) addresses, so a caller-chosen URL cannot make
+the host reach internal services (#112). A refused fetch raises
+`FetchBlockedError`; in a crawl the link is simply skipped, and `WEB.EXTRACT`
+additionally caps a single call to 50 URLs.
+
+Deployments that legitimately need to fetch internal hosts opt in:
+
+| Env var | Effect |
+|---|---|
+| `BLUE_WEB_FETCH_ALLOW_PRIVATE=1` | Disable the guard entirely (trusted/offline networks) |
+| `BLUE_WEB_FETCH_ALLOWLIST=host1,10.0.0.0/8,…` | Admit specific hostnames / IP networks only |
+
+In-process callers can pass `fetch_allow_private=` / `fetch_allowlist=` to
+`WebDataSource` or `WebPipeline` instead.
+
 ### same_domain_only vs cross-domain
 
 ```python

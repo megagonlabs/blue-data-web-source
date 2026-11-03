@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
 from blue_data.source.source import DataSource
 from blue_data.source.vector.vector_source import VectorSource
@@ -98,6 +98,10 @@ class WebDataSource(DataSource):
         "WEB.GRAPH_QUERY",
     })
 
+    # Cap the URLs one WEB.EXTRACT call may fetch+LLM-process, bounding model cost
+    # (each URL is a separate model call) and fan-out of server-side fetches (#112).
+    _MAX_EXTRACT_URLS = 50
+
     def __init__(
         self,
         name: str = "web",
@@ -119,6 +123,8 @@ class WebDataSource(DataSource):
         graph_source: Optional["GraphSource"] = None,
         graph_database: str = "web",
         ingest_delay: float = 0.0,
+        fetch_allow_private: bool = False,
+        fetch_allowlist: Optional[Sequence[str]] = None,
     ):
         super().__init__(name, properties)
         props = self.properties
@@ -140,6 +146,8 @@ class WebDataSource(DataSource):
         ingest_delay = props.get("ingest_delay", ingest_delay)
         nl_model = props.get("nl_model", nl_model)
         graph_database = props.get("graph_database", graph_database)
+        fetch_allow_private = props.get("fetch_allow_private", fetch_allow_private)
+        fetch_allowlist = props.get("fetch_allowlist", fetch_allowlist)
 
         if embedding_model is None:
             embedding_model = self._build_embedding(props)
@@ -171,6 +179,8 @@ class WebDataSource(DataSource):
             graph_source=graph_source,
             graph_database=graph_database,
             ingest_delay=ingest_delay,
+            fetch_allow_private=fetch_allow_private,
+            fetch_allowlist=fetch_allowlist,
         )
 
     # ---------------------------------------------------------------- builders
@@ -289,6 +299,10 @@ class WebDataSource(DataSource):
         BLUE_WEB_TIMEOUT          HTTP timeout in seconds; default: 30
         BLUE_WEB_MAX_WORKERS      concurrent fetch threads; default: 10
         BLUE_WEB_INGEST_DELAY     min seconds between same-host batch fetches; default: 0
+        BLUE_WEB_FETCH_ALLOW_PRIVATE  1|true to permit fetching loopback/private/link-local
+                                  addresses (SSRF guard off); default: off
+        BLUE_WEB_FETCH_ALLOWLIST  comma-separated hostnames / IP networks to admit even
+                                  though they are internal (e.g. "127.0.0.1,10.0.0.0/8")
         BLUE_WEB_ENRICHER         none | basic | llm  (default: basic)
         BLUE_WEB_LLM_MODEL        OpenAI model for llm enricher; default: gpt-4o-mini
         BLUE_WEB_FRESHNESS        file | memory | none  (default: file)
@@ -317,7 +331,14 @@ class WebDataSource(DataSource):
             "timeout": float(os.getenv("BLUE_WEB_TIMEOUT", "30")),
             "max_workers": int(os.getenv("BLUE_WEB_MAX_WORKERS", "10")),
             "ingest_delay": float(os.getenv("BLUE_WEB_INGEST_DELAY", "0")),
+            "fetch_allow_private": os.getenv("BLUE_WEB_FETCH_ALLOW_PRIVATE", "").lower()
+            in ("1", "true", "yes"),
         }
+        # Opt-in allow-list of hostnames / IP networks the server may fetch even
+        # though they are loopback/private/link-local (#112). Comma-separated.
+        _allowlist = os.getenv("BLUE_WEB_FETCH_ALLOWLIST", "").strip()
+        if _allowlist:
+            props["fetch_allowlist"] = [h.strip() for h in _allowlist.split(",") if h.strip()]
         if props["embedding"] == "openai":
             props["openai_embedding_model"] = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
         if props["enricher"] == "llm":
@@ -524,6 +545,11 @@ class WebDataSource(DataSource):
             raise ValueError("WEB.EXTRACT requires a 'url' or 'urls' field")
         if not schema:
             raise ValueError("WEB.EXTRACT requires a 'schema' field (JSON Schema dict or Pydantic model)")
+        if urls and len(urls) > self._MAX_EXTRACT_URLS:
+            raise ValueError(
+                f"WEB.EXTRACT accepts at most {self._MAX_EXTRACT_URLS} urls per call, "
+                f"got {len(urls)}"
+            )
 
         try:
             from blue_data_doc_source.source.document.schema import StructuredFieldExtractor

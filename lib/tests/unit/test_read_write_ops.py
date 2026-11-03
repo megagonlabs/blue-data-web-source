@@ -43,7 +43,10 @@ def test_write_ops_are_the_ones_that_store_index_or_fetch():
 def registry_and_source():
     src = WebDataSource(
         "web",
-        properties={"embedding": "dummy", "vector": "memory", "freshness": "none", "collection": "demo"},
+        # The commit tests fetch a throwaway 127.0.0.1 server, so opt in to
+        # loopback — the fetch destination policy blocks it by default (#112).
+        properties={"embedding": "dummy", "vector": "memory", "freshness": "none",
+                    "collection": "demo", "fetch_allow_private": True},
     )
     reg = DataRegistry()
     reg.register_source(src)

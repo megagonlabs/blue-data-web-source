@@ -2,12 +2,34 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Optional
 
 import httpx
+
+from .fetch_policy import DestinationPolicy
 
 
 _DEFAULT_USER_AGENT = "blue-data-web-source/0.1 (compatible; httpx)"
 _log = logging.getLogger(__name__)
+
+
+class _PolicyTransport(httpx.HTTPTransport):
+    """httpx transport that vets each request's destination before connecting.
+
+    httpx invokes the transport once per request **including every redirect
+    hop**, so routing all fetches through it applies the
+    :class:`DestinationPolicy` uniformly to the initial URL and each redirect
+    (#112). Test suites that stub HTTP (``pytest-httpx``) swap the transport out,
+    so the policy only runs on genuine network fetches.
+    """
+
+    def __init__(self, policy: DestinationPolicy, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._policy = policy
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        self._policy.check_url(str(request.url))
+        return super().handle_request(request)
 
 
 @dataclass
@@ -23,16 +45,27 @@ class FetchResult:
 
 
 class WebFetcher:
-    def __init__(self, timeout: float = 30.0, headers: dict | None = None):
+    def __init__(
+        self,
+        timeout: float = 30.0,
+        headers: dict | None = None,
+        policy: Optional[DestinationPolicy] = None,
+    ):
         self._timeout = timeout
         self._headers = {
             "User-Agent": _DEFAULT_USER_AGENT,
             **(headers or {}),
         }
+        # Block loopback/private/link-local/metadata destinations by default so a
+        # caller-chosen URL can't make the server reach internal addresses (#112).
+        self._policy = policy if policy is not None else DestinationPolicy()
 
     def fetch(self, url: str) -> FetchResult:
         _log.debug("fetching %s", url)
-        with httpx.Client(timeout=self._timeout, follow_redirects=True) as client:
+        transport = _PolicyTransport(self._policy)
+        with httpx.Client(
+            timeout=self._timeout, follow_redirects=True, transport=transport
+        ) as client:
             response = client.get(url, headers=self._headers)
             response.raise_for_status()
             result = FetchResult(
