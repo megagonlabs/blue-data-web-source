@@ -47,6 +47,18 @@ def _chunk(url="https://example.com/a", domain="example.com", title="Example Art
     }
 
 
+def _ingested(url="https://example.com/a", n=1):
+    """An ingested-outcome dict as WebDataSource.ingest_result returns it (#99)."""
+    records = [_chunk(url=url, n=i) for i in range(n)]
+    return {"status": "ingested", "url": url, "chunk_count": n,
+            "records": records, "page_id": "web_abc123"}
+
+
+def _outcome(status, url="https://example.com/a", **extra):
+    """A non-ingested outcome dict (unchanged / duplicate / no_content / error)."""
+    return {"status": status, "url": url, "chunk_count": 0, "records": [], **extra}
+
+
 # ── ensure-index ──────────────────────────────────────────────────────────────
 
 class TestEnsureIndex:
@@ -80,14 +92,14 @@ class TestEnsureIndex:
 
 class TestIngest:
     def test_single_url(self, runner, mock_source):
-        mock_source.execute_query.return_value = [_chunk()]
+        mock_source.ingest_result.return_value = _ingested(n=1)
         result = runner.invoke(cli, ["page", "import", "https://example.com/a"])
         assert result.exit_code == 0
         assert "1 chunk" in result.output
         assert "example.com" in result.output
 
     def test_single_url_json(self, runner, mock_source):
-        mock_source.execute_query.return_value = [_chunk(), _chunk(n=1)]
+        mock_source.ingest_result.return_value = _ingested(n=2)
         result = runner.invoke(cli, ["--format", "json", "page", "import", "https://example.com/a"])
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -96,9 +108,9 @@ class TestIngest:
         assert data["page_id"] == "web_abc123"
 
     def test_multi_url(self, runner, mock_source):
-        mock_source.execute_query.side_effect = [
-            [_chunk(url="https://example.com/a")],
-            [_chunk(url="https://example.com/b")],
+        mock_source.ingest_result.side_effect = [
+            _ingested(url="https://example.com/a"),
+            _ingested(url="https://example.com/b"),
         ]
         result = runner.invoke(cli, ["page", "import", "https://example.com/a", "https://example.com/b"])
         assert result.exit_code == 0
@@ -106,9 +118,9 @@ class TestIngest:
         assert "✓" in result.output
 
     def test_multi_url_json(self, runner, mock_source):
-        mock_source.execute_query.side_effect = [
-            [_chunk(url="https://example.com/a")],
-            [_chunk(url="https://example.com/b")],
+        mock_source.ingest_result.side_effect = [
+            _ingested(url="https://example.com/a"),
+            _ingested(url="https://example.com/b"),
         ]
         result = runner.invoke(cli, ["--format", "json", "page", "import", "https://example.com/a", "https://example.com/b"])
         assert result.exit_code == 0
@@ -116,24 +128,48 @@ class TestIngest:
         assert isinstance(data, list)
         assert len(data) == 2
 
+    def test_unchanged_single_url_exits_zero(self, runner, mock_source):
+        # Re-ingesting an unchanged page is a success, not an error (#99).
+        mock_source.ingest_result.return_value = _outcome("unchanged", "https://example.com/u")
+        result = runner.invoke(cli, ["page", "import", "https://example.com/u"])
+        assert result.exit_code == 0
+        assert "Unchanged" in result.output
+
+    def test_duplicate_single_url_exits_zero(self, runner, mock_source):
+        mock_source.ingest_result.return_value = _outcome(
+            "duplicate", "https://example.com/d", duplicate_of="web_other"
+        )
+        result = runner.invoke(cli, ["page", "import", "https://example.com/d"])
+        assert result.exit_code == 0
+        assert "Duplicate" in result.output
+
     def test_no_content_single_url_exits_nonzero(self, runner, mock_source):
-        mock_source.execute_query.return_value = []
+        mock_source.ingest_result.return_value = _outcome("no_content", "https://example.com/empty")
         result = runner.invoke(cli, ["page", "import", "https://example.com/empty"])
         assert result.exit_code == 1
 
     def test_skipped_url_shown_in_multi(self, runner, mock_source):
-        mock_source.execute_query.side_effect = [
-            [_chunk(url="https://example.com/a")],
-            [],
+        mock_source.ingest_result.side_effect = [
+            _ingested(url="https://example.com/a"),
+            _outcome("no_content", "https://example.com/b"),
         ]
         result = runner.invoke(cli, ["page", "import", "https://example.com/a", "https://example.com/b"])
         assert result.exit_code == 1
         assert "✗" in result.output
 
+    def test_unchanged_url_shown_in_multi(self, runner, mock_source):
+        mock_source.ingest_result.side_effect = [
+            _ingested(url="https://example.com/a"),
+            _outcome("unchanged", "https://example.com/b"),
+        ]
+        result = runner.invoke(cli, ["page", "import", "https://example.com/a", "https://example.com/b"])
+        assert result.exit_code == 0  # unchanged is not a failure
+        assert "unchanged" in result.output.lower()
+
     def test_skipped_url_json_exits_nonzero(self, runner, mock_source):
-        mock_source.execute_query.side_effect = [
-            [_chunk(url="https://example.com/a")],
-            [],
+        mock_source.ingest_result.side_effect = [
+            _ingested(url="https://example.com/a"),
+            _outcome("no_content", "https://example.com/b"),
         ]
         result = runner.invoke(cli, ["--format", "json", "page", "import", "https://example.com/a", "https://example.com/b"])
         assert result.exit_code == 1
@@ -142,10 +178,9 @@ class TestIngest:
         assert any(item.get("error") for item in data)
 
     def test_collection_passed_in_request(self, runner, mock_source):
-        mock_source.execute_query.return_value = [_chunk()]
+        mock_source.ingest_result.return_value = _ingested()
         runner.invoke(cli, ["page", "import", "https://example.com/a", "--collection", "news"])
-        call_args = mock_source.execute_query.call_args[0][0]
-        assert call_args["collection"] == "news"
+        assert mock_source.ingest_result.call_args.kwargs["collection"] == "news"
 
 
 # ── crawl ─────────────────────────────────────────────────────────────────────
@@ -471,7 +506,7 @@ class TestLog:
 
     # --log does not corrupt JSON stdout (source is mocked → no log events fire)
     def test_log_does_not_corrupt_json_stdout(self, runner, mock_source):
-        mock_source.execute_query.return_value = [_chunk(), _chunk(n=1)]
+        mock_source.ingest_result.return_value = _ingested(n=2)
         result = runner.invoke(cli, ["--format", "json", "page", "import", "--log", "https://example.com/a"])
         assert result.exit_code == 0
         data = json.loads(result.output)

@@ -192,35 +192,45 @@ def page_import(ctx: click.Context, urls: tuple[str, ...], collection: Optional[
     except Exception as exc:
         _err(f"Failed to build source: {exc}", fmt)
 
-    per_url: dict[str, list] = {}
+    # Per-URL outcome dicts carry a status (ingested / unchanged / duplicate /
+    # no_content / error). unchanged and duplicate are routine successes — a
+    # re-import of a tracked page must not be reported as an error (#99).
+    per_url: dict[str, dict] = {}
     had_failure = False
     for url in urls:
         try:
-            records = source.execute_query({"op": "WEB.INGEST", "url": url, "collection": coll})
-            per_url[url] = records
-            if not records:
-                had_failure = True
+            result = source.ingest_result(url, collection=coll)
         except Exception as exc:
-            click.echo(f"Error importing {url}: {exc}", err=True)
-            per_url[url] = []
+            result = {"status": "error", "url": url, "chunk_count": 0,
+                      "records": [], "error": str(exc)}
+        per_url[url] = result
+        if result["status"] in ("no_content", "error"):
             had_failure = True
 
     if fmt in ("json", "nl"):
         output = []
-        for url, records in per_url.items():
-            if records:
-                first = records[0]
+        for url, result in per_url.items():
+            status = result["status"]
+            if status == "ingested":
+                first = result["records"][0]
                 output.append({
-                    "page_id": first.get("page_id"),
+                    "status": status,
+                    "page_id": result.get("page_id"),
                     "url": url,
                     "title": first.get("title"),
                     "domain": first.get("domain"),
                     "date": first.get("date"),
-                    "chunk_count": len(records),
+                    "chunk_count": result["chunk_count"],
                     "collection": coll,
                 })
+            elif status in ("unchanged", "duplicate"):
+                entry = {"status": status, "url": url, "collection": coll}
+                if result.get("duplicate_of"):
+                    entry["duplicate_of"] = result["duplicate_of"]
+                output.append(entry)
             else:
-                output.append({"url": url, "error": "no content extracted"})
+                output.append({"status": status, "url": url,
+                               "error": result.get("error", "no content extracted")})
         _emit(output[0] if len(output) == 1 else output, fmt)
         if had_failure:
             sys.exit(1)
@@ -228,24 +238,43 @@ def page_import(ctx: click.Context, urls: tuple[str, ...], collection: Optional[
 
     if len(urls) == 1:
         url = urls[0]
-        records = per_url[url]
-        if not records:
+        result = per_url[url]
+        status = result["status"]
+        if status == "no_content":
             _err(f"No content extracted from {url}")
-        first = records[0]
-        click.echo(f"Imported {len(records)} chunk{'s' if len(records) != 1 else ''} from {url}")
-        if first.get("title"):
-            click.echo(f"  title:      {first['title']}")
-        click.echo(f"  domain:     {first['domain']}")
-        if first.get("date"):
-            click.echo(f"  date:       {first['date']}")
-        click.echo(f"  collection: {coll}")
+        elif status == "error":
+            _err(f"Error importing {url}: {result.get('error', 'unknown error')}")
+        elif status == "unchanged":
+            click.echo(f"Unchanged: {url} (already up to date)")
+            click.echo(f"  collection: {coll}")
+        elif status == "duplicate":
+            suffix = f" (same content as {result['duplicate_of']})" if result.get("duplicate_of") else ""
+            click.echo(f"Duplicate: {url} — content already ingested{suffix}")
+            click.echo(f"  collection: {coll}")
+        else:
+            records = result["records"]
+            first = records[0]
+            click.echo(f"Imported {len(records)} chunk{'s' if len(records) != 1 else ''} from {url}")
+            if first.get("title"):
+                click.echo(f"  title:      {first['title']}")
+            click.echo(f"  domain:     {first['domain']}")
+            if first.get("date"):
+                click.echo(f"  date:       {first['date']}")
+            click.echo(f"  collection: {coll}")
     else:
-        total_chunks = sum(len(r) for r in per_url.values())
-        total_pages = sum(1 for r in per_url.values() if r)
+        total_chunks = sum(r["chunk_count"] for r in per_url.values())
+        total_pages = sum(1 for r in per_url.values() if r["status"] == "ingested")
         click.echo(f"Imported {total_pages} page{'s' if total_pages != 1 else ''}, {total_chunks} chunks")
-        for url, records in per_url.items():
-            if records:
-                click.echo(f"  ✓ {url}  ({len(records)} chunks)")
+        for url, result in per_url.items():
+            status = result["status"]
+            if status == "ingested":
+                click.echo(f"  ✓ {url}  ({result['chunk_count']} chunks)")
+            elif status == "unchanged":
+                click.echo(f"  ≡ {url}  (unchanged)")
+            elif status == "duplicate":
+                click.echo(f"  ≡ {url}  (duplicate)")
+            elif status == "error":
+                click.echo(f"  ✗ {url}  ({result.get('error', 'error')})")
             else:
                 click.echo(f"  ✗ {url}  (no content)")
         click.echo(f"\n  collection: {coll}")

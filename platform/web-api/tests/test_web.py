@@ -43,51 +43,73 @@ _CHUNK = {
 }
 
 
+def _ingested(url, n=1):
+    records = [{**_CHUNK, "url": url, "chunk_id": f"web_x_chunk_{i:04d}"} for i in range(n)]
+    return {"status": "ingested", "url": url, "chunk_count": n, "records": records}
+
+
+def _outcome(status, url, **extra):
+    return {"status": status, "url": url, "chunk_count": 0, "records": [], **extra}
+
+
 class TestIngest:
     def test_single_url(self, client, mock_source):
-        mock_source.execute_query.return_value = [_CHUNK]
+        mock_source.ingest_many_results.return_value = [_ingested("https://example.com/article")]
         r = client.post("/web/ingest", json={"url": "https://example.com/article"})
         assert r.status_code == 200
         body = r.json()
         assert body["chunk_count"] == 1
         assert body["pages_ingested"] == 1
-        assert body["urls"] == ["https://example.com/article"]
+        assert body["ingested"] == ["https://example.com/article"]
 
-    def test_passes_url_to_execute_query(self, client, mock_source):
-        mock_source.execute_query.return_value = [_CHUNK]
+    def test_passes_url_to_source(self, client, mock_source):
+        mock_source.ingest_many_results.return_value = [_ingested("https://example.com/article")]
         client.post("/web/ingest", json={"url": "https://example.com/article"})
-        call_arg = mock_source.execute_query.call_args[0][0]
-        assert call_arg["op"] == "WEB.INGEST"
-        assert call_arg["url"] == "https://example.com/article"
+        args, kwargs = mock_source.ingest_many_results.call_args
+        assert args[0] == ["https://example.com/article"]
 
     def test_urls_list(self, client, mock_source):
-        chunk2 = {**_CHUNK, "url": "https://example.com/b", "chunk_id": "web_def_chunk_0000"}
-        mock_source.execute_query.return_value = [_CHUNK, chunk2]
+        mock_source.ingest_many_results.return_value = [
+            _ingested("https://example.com/article"), _ingested("https://example.com/b"),
+        ]
         r = client.post("/web/ingest", json={"urls": ["https://example.com/article", "https://example.com/b"]})
         assert r.json()["pages_ingested"] == 2
 
-    def test_passes_urls_to_execute_query(self, client, mock_source):
-        mock_source.execute_query.return_value = []
+    def test_passes_urls_to_source(self, client, mock_source):
+        mock_source.ingest_many_results.return_value = []
         client.post("/web/ingest", json={"urls": ["https://a.com", "https://b.com"]})
-        call_arg = mock_source.execute_query.call_args[0][0]
-        assert call_arg["urls"] == ["https://a.com", "https://b.com"]
-        assert "url" not in call_arg
+        args, kwargs = mock_source.ingest_many_results.call_args
+        assert args[0] == ["https://a.com", "https://b.com"]
 
     def test_collection_passed_through(self, client, mock_source):
-        mock_source.execute_query.return_value = [_CHUNK]
+        mock_source.ingest_many_results.return_value = [_ingested("https://example.com/article")]
         client.post("/web/ingest", json={"url": "https://example.com/article", "collection": "news"})
-        call_arg = mock_source.execute_query.call_args[0][0]
-        assert call_arg["collection"] == "news"
+        _, kwargs = mock_source.ingest_many_results.call_args
+        assert kwargs["collection"] == "news"
 
     def test_missing_url_and_urls_returns_422(self, client, mock_source):
         r = client.post("/web/ingest", json={})
         assert r.status_code == 422
 
-    def test_empty_result_returns_zero_chunks(self, client, mock_source):
-        mock_source.execute_query.return_value = []
-        r = client.post("/web/ingest", json={"url": "https://example.com/nav-only"})
-        assert r.json()["chunk_count"] == 0
-        assert r.json()["pages_ingested"] == 0
+    def test_no_content_returns_zero_chunks_and_failed(self, client, mock_source):
+        mock_source.ingest_many_results.return_value = [
+            _outcome("no_content", "https://example.com/nav-only")
+        ]
+        body = client.post("/web/ingest", json={"url": "https://example.com/nav-only"}).json()
+        assert body["chunk_count"] == 0
+        assert body["pages_ingested"] == 0
+        assert body["failed"] == ["https://example.com/nav-only"]
+
+    def test_unchanged_reported_as_success(self, client, mock_source):
+        # Re-ingesting an unchanged page is 200 with the URL under 'unchanged' (#99).
+        mock_source.ingest_many_results.return_value = [
+            _outcome("unchanged", "https://example.com/u")
+        ]
+        r = client.post("/web/ingest", json={"url": "https://example.com/u"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["unchanged"] == ["https://example.com/u"]
+        assert body["failed"] == []
 
 
 # ── /web/crawl ────────────────────────────────────────────────────────────────

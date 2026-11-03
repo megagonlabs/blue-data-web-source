@@ -63,6 +63,15 @@ class FreshnessStore(ABC):
         half-done ingest does not block the hash permanently.
         """
 
+    def owner_of_hash(self, collection: str, content_hash: str) -> Optional[str]:
+        """Return the ``page_id`` owning *content_hash* in *collection*, or ``None``.
+
+        Best-effort read used to report which page a duplicate collides with
+        (#99). The base implementation returns ``None``; stores that keep a
+        reverse index override it.
+        """
+        return None
+
 
 class _DictFreshnessStore(FreshnessStore):
     """Shared in-memory implementation over nested dicts, guarded by one lock.
@@ -158,6 +167,10 @@ class _DictFreshnessStore(FreshnessStore):
             rec = self._store.get(collection, {}).get(page_id)
             if not rec or rec.get("content_hash") != content_hash:
                 idx.pop(content_hash, None)
+
+    def owner_of_hash(self, collection: str, content_hash: str) -> Optional[str]:
+        with self._lock:
+            return self._hash_index.get(collection, {}).get(content_hash)
 
 
 class MemoryFreshnessStore(_DictFreshnessStore):

@@ -15,10 +15,27 @@ if TYPE_CHECKING:
     from blue_data.source.graph.graph_source import GraphSource
 
 from .freshness import FreshnessStore
-from .pipeline import WebPipeline
+from .pipeline import IngestResult, WebPipeline
 from .search_provider import WebSearchProvider
 
 _log = logging.getLogger(__name__)
+
+
+def _ingest_result_to_dict(result: IngestResult) -> Dict[str, Any]:
+    """Render an :class:`IngestResult` as a JSON-friendly dict for the frontends (#99)."""
+    out: Dict[str, Any] = {
+        "status": result.status,
+        "url": result.url,
+        "chunk_count": len(result.records),
+        "records": result.records,
+    }
+    if result.page_id:
+        out["page_id"] = result.page_id
+    if result.duplicate_of:
+        out["duplicate_of"] = result.duplicate_of
+    if result.error:
+        out["error"] = result.error
+    return out
 
 
 class WebDataSource(DataSource):
@@ -377,6 +394,32 @@ class WebDataSource(DataSource):
         if len(targets) == 1:
             return self._pipeline.ingest(targets[0], collection=collection)
         return self._pipeline.ingest_many(targets, collection=collection)
+
+    def ingest_result(self, url: str, collection: Optional[str] = None) -> Dict[str, Any]:
+        """Ingest one URL and report the outcome as a dict (#99).
+
+        Unlike the ``WEB.INGEST`` op — which returns only the chunk list, so an
+        empty result conflates success with failure — this surfaces a ``status``
+        (``ingested`` / ``unchanged`` / ``duplicate`` / ``no_content``) so the
+        CLI, REST and MCP layers can report unchanged/duplicate re-ingests as
+        success rather than an error. Keys: ``status``, ``url``, ``chunk_count``,
+        ``records``, and (when present) ``page_id`` / ``duplicate_of`` / ``error``.
+        """
+        return _ingest_result_to_dict(
+            self._pipeline.ingest_result(url, collection=collection)
+        )
+
+    def ingest_many_results(
+        self, urls: List[str], collection: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Ingest several URLs, returning one outcome dict per URL (#99).
+
+        See :meth:`ingest_result` for the dict shape.
+        """
+        return [
+            _ingest_result_to_dict(r)
+            for r in self._pipeline.ingest_many_results(urls, collection=collection)
+        ]
 
     def _ingest_feed(self, request: Dict[str, Any], collection_override=None) -> List[Dict[str, Any]]:
         url = request.get("url")

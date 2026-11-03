@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any, Dict, List, Optional, Sequence
@@ -24,6 +25,43 @@ from .politeness import DomainPoliteness
 from .record import WebChunkRecord
 
 _log = logging.getLogger(__name__)
+
+
+# Ingest outcomes (#99). An empty chunk list no longer conflates "nothing was
+# extractable" with the routine, successful "page was unchanged / is a duplicate"
+# — callers map these to distinct messages (and exit codes) instead of treating
+# every empty result as an error.
+INGEST_INGESTED = "ingested"
+INGEST_UNCHANGED = "unchanged"
+INGEST_DUPLICATE = "duplicate"
+INGEST_NO_CONTENT = "no_content"
+INGEST_ERROR = "error"
+
+
+@dataclass
+class IngestResult:
+    """Outcome of ingesting a single URL.
+
+    ``status`` is one of :data:`INGEST_INGESTED`, :data:`INGEST_UNCHANGED`,
+    :data:`INGEST_DUPLICATE`, :data:`INGEST_NO_CONTENT`, :data:`INGEST_ERROR`.
+    ``records`` holds the chunk dicts and is non-empty only when the page was
+    actually ``ingested``. ``duplicate_of`` is the ``page_id`` of the page that
+    already owns this text (when ``status == "duplicate"`` and the freshness
+    store can report it). ``error`` carries the message when ``status ==
+    "error"``.
+    """
+
+    status: str
+    url: str
+    records: List[Dict[str, Any]] = field(default_factory=list)
+    page_id: Optional[str] = None
+    duplicate_of: Optional[str] = None
+    error: Optional[str] = None
+
+    @property
+    def ok(self) -> bool:
+        """True for every non-failure outcome (ingested/unchanged/duplicate)."""
+        return self.status in (INGEST_INGESTED, INGEST_UNCHANGED, INGEST_DUPLICATE)
 
 
 class WebPipeline:
@@ -87,7 +125,22 @@ class WebPipeline:
         collection: Optional[str] = None,
         _fetch_result: Optional[FetchResult] = None,
     ) -> List[Dict[str, Any]]:
-        """Fetch, extract, chunk, and embed a URL.
+        """Fetch, extract, chunk, and embed a URL; return the chunk dicts.
+
+        Thin wrapper over :meth:`ingest_result` that returns just the records
+        (empty for unchanged/duplicate/no-content outcomes). Use
+        :meth:`ingest_result` when the caller needs to tell those outcomes apart
+        (#99).
+        """
+        return self.ingest_result(url, collection=collection, _fetch_result=_fetch_result).records
+
+    def ingest_result(
+        self,
+        url: str,
+        collection: Optional[str] = None,
+        _fetch_result: Optional[FetchResult] = None,
+    ) -> IngestResult:
+        """Fetch, extract, chunk, and embed a URL, reporting the outcome.
 
         Args:
             url: Web page URL to ingest.
@@ -95,22 +148,25 @@ class WebPipeline:
             _fetch_result: Pre-fetched result to skip the HTTP fetch (used by crawler).
 
         Returns:
-            List of ``WebChunkRecord.to_dict()`` dicts, one per chunk.
-            Returns an empty list if the page yields no extractable text.
+            An :class:`IngestResult` whose ``status`` distinguishes a successful
+            ingest from the routine ``unchanged``/``duplicate`` skips and a
+            genuine ``no_content`` extraction — so a caller no longer has to read
+            an empty list as a failure (#99). ``records`` is non-empty only when
+            ``status == "ingested"``.
         """
         effective_collection = collection or self._collection
 
         _log.info("ingesting %s", url)
         fetch_result = _fetch_result if _fetch_result is not None else self._fetcher.fetch(url)
+        page_id = "web_" + sha256(fetch_result.final_url.encode()).hexdigest()[:16]
         extract_result = self._extractor.extract(fetch_result.html, fetch_result.final_url)
         if extract_result is None or not extract_result.text.strip():
             _log.info("no content: %s", url)
-            return []
+            return IngestResult(INGEST_NO_CONTENT, url, page_id=page_id)
 
         meta = self._metadata_extractor.extract(fetch_result.html)
 
         domain = urlparse(fetch_result.final_url).netloc
-        page_id = "web_" + sha256(fetch_result.final_url.encode()).hexdigest()[:16]
         content_hash = sha256(extract_result.text.strip().encode()).hexdigest()
 
         # Previous chunk count for this page, if known. Used after re-chunking to
@@ -127,13 +183,14 @@ class WebPipeline:
                     **stored,
                     "last_checked_at": datetime.now(timezone.utc).isoformat(),
                 })
-                return []
+                return IngestResult(INGEST_UNCHANGED, url, page_id=page_id)
 
             # Cross-URL dedup within this collection, made atomic: claim the content
             # hash before the expensive chunk/embed/upsert so two identical-text URLs
             # ingested concurrently cannot both pass a check-then-act test (#46). A
             # False claim means another page in this collection already owns the text.
             if not self._freshness_store.claim_content_hash(effective_collection, content_hash, page_id):
+                owner = self._freshness_store.owner_of_hash(effective_collection, content_hash)
                 _log.debug("duplicate content: %s (collection %r)", url, effective_collection)
                 # Another page in this collection already owns this text. If THIS
                 # page previously held its own (different) content, that old content
@@ -147,7 +204,9 @@ class WebPipeline:
                     self._purge_page(
                         effective_collection, page_id, stored.get("chunk_count", 0)
                     )
-                return []
+                return IngestResult(
+                    INGEST_DUPLICATE, url, page_id=page_id, duplicate_of=owner
+                )
             claimed_hash = True
 
             prev_chunk_count = stored.get("chunk_count", 0) if stored else 0
@@ -262,7 +321,7 @@ class WebPipeline:
                 })
 
             _log.info("ingested %s: %d chunk%s", url, len(records), "s" if len(records) != 1 else "")
-            return records
+            return IngestResult(INGEST_INGESTED, url, records=records, page_id=page_id)
         except Exception:
             # An ingest that fails after claiming the content hash must release
             # the claim so the text is not blocked from a later ingest (#46).
@@ -313,23 +372,46 @@ class WebPipeline:
         hosts run concurrently. This prevents a batch of same-host URLs from
         being hit with ``max_workers`` simultaneous requests.
         """
+        records: List[Dict[str, Any]] = []
+        for result in self.ingest_many_results(urls, collection=collection):
+            records.extend(result.records)
+        return records
+
+    def ingest_many_results(
+        self,
+        urls: List[str],
+        collection: Optional[str] = None,
+    ) -> List[IngestResult]:
+        """Ingest multiple URLs concurrently, reporting each URL's outcome.
+
+        Like :meth:`ingest_many` but returns one :class:`IngestResult` per URL so
+        callers can tell ``unchanged``/``duplicate`` skips apart from genuine
+        ``no_content`` / ``error`` failures (#99). A URL that raises is captured
+        as an ``error`` result rather than silently dropped. Result order is not
+        guaranteed.
+
+        Per-domain politeness applies: URLs on the same host are processed one at
+        a time (optionally spaced by ``ingest_delay``), while URLs on different
+        hosts run concurrently.
+        """
         if not urls:
             return []
-        results: List[Dict[str, Any]] = []
+        results: List[IngestResult] = []
         workers = min(self._max_workers, len(urls))
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(self._ingest_polite, u, collection): u for u in urls}
+            futures = {executor.submit(self._ingest_result_polite, u, collection): u for u in urls}
             for future in as_completed(futures):
+                url = futures[future]
                 try:
-                    results.extend(future.result())
-                except Exception:
-                    pass
+                    results.append(future.result())
+                except Exception as exc:
+                    results.append(IngestResult(INGEST_ERROR, url, error=str(exc)))
         return results
 
-    def _ingest_polite(self, url: str, collection: Optional[str]) -> List[Dict[str, Any]]:
+    def _ingest_result_polite(self, url: str, collection: Optional[str]) -> IngestResult:
         """Ingest one URL while holding its per-host politeness lock."""
         with self._politeness.hold(url):
-            return self.ingest(url, collection=collection)
+            return self.ingest_result(url, collection=collection)
 
     def ingest_feed(
         self,

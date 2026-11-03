@@ -96,17 +96,36 @@ def ingest_url(
     """
     try:
         source = _get_source()
-        records = source.execute_query({"op": "WEB.INGEST", "url": url, "collection": collection})
-        if not records:
-            return json.dumps({"error": "No content extracted — page may be a login wall or nav-only"})
-        first = records[0]
+        result = source.ingest_result(url, collection=collection)
+        status = result["status"]
+        if status == "no_content":
+            return json.dumps({
+                "status": status,
+                "error": "No content extracted — page may be a login wall or nav-only",
+            })
+        if status == "unchanged":
+            # Re-ingesting a tracked, unchanged page is a routine success (#99).
+            return json.dumps({
+                "status": status, "url": url, "collection": collection,
+                "message": "Page unchanged since last ingest; already up to date",
+            })
+        if status == "duplicate":
+            out = {
+                "status": status, "url": url, "collection": collection,
+                "message": "Identical content already ingested from another URL",
+            }
+            if result.get("duplicate_of"):
+                out["duplicate_of"] = result["duplicate_of"]
+            return json.dumps(out)
+        first = result["records"][0]
         return json.dumps({
+            "status": status,
             "page_id": first.get("page_id"),
             "url": first["url"],
             "domain": first["domain"],
             "title": first.get("title"),
             "date": first.get("date"),
-            "chunk_count": len(records),
+            "chunk_count": result["chunk_count"],
             "collection": collection,
         })
     except Exception as exc:
@@ -120,20 +139,31 @@ def ingest_urls(
 ) -> str:
     """Fetch and ingest multiple web pages in one call.
 
-    Equivalent to calling ingest_url for each URL. Pages that fail to extract
-    are skipped silently; their URLs are reported in the 'skipped' list.
+    Equivalent to calling ingest_url for each URL. Each URL's outcome is
+    reported by status: newly ``ingested``, ``unchanged`` (already up to date)
+    or ``duplicate`` (same text as another page) are successes; ``no_content``
+    and ``error`` URLs are reported under ``failed`` (#99).
 
-    Returns a summary: total chunks ingested and any skipped URLs.
+    Returns a summary: total chunks, per-status URL lists, and the collection.
     """
     try:
         source = _get_source()
-        records = source.execute_query({"op": "WEB.INGEST", "urls": urls, "collection": collection})
-        ingested_urls = {r["url"] for r in records}
-        skipped = [u for u in urls if u not in ingested_urls]
+        results = source.ingest_many_results(urls, collection=collection)
+        by_status: dict[str, list[str]] = {
+            "ingested": [], "unchanged": [], "duplicate": [], "failed": []
+        }
+        chunk_count = 0
+        for r in results:
+            status = r["status"]
+            chunk_count += r["chunk_count"]
+            bucket = status if status in ("ingested", "unchanged", "duplicate") else "failed"
+            by_status[bucket].append(r["url"])
         return json.dumps({
-            "chunk_count": len(records),
-            "ingested": len(ingested_urls),
-            "skipped": skipped,
+            "chunk_count": chunk_count,
+            "ingested": by_status["ingested"],
+            "unchanged": by_status["unchanged"],
+            "duplicate": by_status["duplicate"],
+            "failed": by_status["failed"],
             "collection": collection,
         })
     except Exception as exc:
