@@ -4,20 +4,17 @@ An LLM agent calls the MCP tools from platform/web-mcp/src/server.py to
 ingest web pages and answer questions through search. The agent decides which
 tool to call based on the task description.
 
-Requires the MCP server to be running in a separate terminal:
+The MCP server is launched automatically over the stdio transport — you do
+NOT start it yourself; MultiServerMCPClient spawns ``server.py`` as a
+subprocess. Configure the server via the environment this demo inherits, e.g.:
 
-    cd platform/web-mcp
     BLUE_WEB_EMBEDDING=openai \\
-    OPENAI_API_KEY=sk-... \\
     BLUE_WEB_REDIS_HOST=localhost \\
-    python src/web_mcp/server.py
+    OPENAI_API_KEY=sk-... \\
+    python3 examples/framework-demos/mcp_demo.py
 
-Then run this demo:
-
-    OPENAI_API_KEY=sk-... python3 examples/framework-demos/mcp_demo.py
-
-Deps: pip install langgraph langchain-openai langchain-mcp-adapters
-      OPENAI_API_KEY, MCP server running (see above)
+Deps: pip install "langchain-mcp-adapters>=0.1" langgraph langchain-openai
+      plus OPENAI_API_KEY in the environment.
 """
 from __future__ import annotations
 
@@ -35,7 +32,7 @@ try:
     from langgraph.prebuilt import create_react_agent
 except ImportError:
     print("ERROR: required packages not installed.")
-    print("  pip install langgraph langchain-openai langchain-mcp-adapters")
+    print('  pip install "langchain-mcp-adapters>=0.1" langgraph langchain-openai')
     sys.exit(1)
 
 MCP_SERVER_PATH = os.path.join(
@@ -74,7 +71,10 @@ async def run_agent():
     print()
     print("  Connecting to MCP server via stdio transport…")
 
-    async with MultiServerMCPClient(
+    # As of langchain-mcp-adapters 0.1.0 MultiServerMCPClient is no longer an
+    # async context manager; construct it directly and await get_tools(), which
+    # spawns the stdio server, lists its tools, and closes the session (#98).
+    client = MultiServerMCPClient(
         {
             "blue-web": {
                 "command": "python",
@@ -82,56 +82,56 @@ async def run_agent():
                 "transport": "stdio",
             }
         }
-    ) as client:
-        tools = client.get_tools()
-        tool_names = [t.name for t in tools]
-        _ok(f"Tools loaded: {tool_names}")
+    )
+    tools = await client.get_tools()
+    tool_names = [t.name for t in tools]
+    _ok(f"Tools loaded: {tool_names}")
 
-        llm   = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-        agent = create_react_agent(llm, tools)
+    llm   = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    agent = create_react_agent(llm, tools)
 
+    print()
+    print("  AGENT TASK")
+    _hr()
+    print(f"  {TASK[:W - 2]}")
+    if len(TASK) > W - 2:
+        print(f"  {TASK[W - 2:]}")
+
+    print()
+    print("  Running agent…")
+    _hr()
+
+    result = await agent.ainvoke({"messages": [{"role": "user", "content": TASK}]})
+
+    messages = result.get("messages", [])
+    for msg in messages:
+        role = getattr(msg, "type", "?")
+        content = getattr(msg, "content", "")
+        if not content:
+            continue
+        if role == "tool":
+            print(f"\n  [tool result]")
+        elif role == "ai":
+            print(f"\n  [assistant]")
+        else:
+            continue
+        lines = str(content).splitlines()
+        for line in lines[:8]:
+            print(f"    {line[:W - 4]}")
+        if len(lines) > 8:
+            print(f"    … ({len(lines) - 8} more lines)")
+
+    # Final AI message
+    final = next(
+        (m for m in reversed(messages) if getattr(m, "type", "") == "ai"),
+        None,
+    )
+    if final:
         print()
-        print("  AGENT TASK")
+        print("  FINAL ANSWER")
         _hr()
-        print(f"  {TASK[:W - 2]}")
-        if len(TASK) > W - 2:
-            print(f"  {TASK[W - 2:]}")
-
-        print()
-        print("  Running agent…")
-        _hr()
-
-        result = await agent.ainvoke({"messages": [{"role": "user", "content": TASK}]})
-
-        messages = result.get("messages", [])
-        for msg in messages:
-            role = getattr(msg, "type", "?")
-            content = getattr(msg, "content", "")
-            if not content:
-                continue
-            if role == "tool":
-                print(f"\n  [tool result]")
-            elif role == "ai":
-                print(f"\n  [assistant]")
-            else:
-                continue
-            lines = str(content).splitlines()
-            for line in lines[:8]:
-                print(f"    {line[:W - 4]}")
-            if len(lines) > 8:
-                print(f"    … ({len(lines) - 8} more lines)")
-
-        # Final AI message
-        final = next(
-            (m for m in reversed(messages) if getattr(m, "type", "") == "ai"),
-            None,
-        )
-        if final:
-            print()
-            print("  FINAL ANSWER")
-            _hr()
-            for line in str(final.content).splitlines():
-                print(f"  {line}")
+        for line in str(final.content).splitlines():
+            print(f"  {line}")
 
     print()
     print("  SUMMARY")
