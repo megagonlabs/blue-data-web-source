@@ -13,7 +13,7 @@ records = source.execute_query({
     "op": "WEB.CRAWL",
     "url": "https://docs.example.com/",
     "depth": 2,               # hops from seed (0 = seed only, 1 = seed + its links, ...)
-    "max_pages": 50,          # hard cap on total pages; crawl stops when reached
+    "max_pages": 50,          # hard cap on successful fetches; crawl stops when reached
     "same_domain_only": True, # default — stay within docs.example.com
     "collection": "docs",
 })
@@ -30,8 +30,8 @@ Returns a flat `list[dict]` — all `WebChunkRecord` dicts from all ingested pag
 |---|---|---|
 | `url` | required | Seed URL — crawl starts here |
 | `depth` | `1` | Maximum hops from the seed. `0` = seed page only, `1` = seed + its linked pages, `2` = seed + links + links-of-links |
-| `max_pages` | `10` | Max pages to **import** (that yield chunks), regardless of depth. Fetches that 404, time out, or extract nothing do not count toward it |
-| `max_attempts` | `max_pages × 10` | Hard cap on fetch attempts, bounding how many dead links the crawl chases while reaching `max_pages` imports |
+| `max_pages` | `10` | Max pages to **successfully fetch**, regardless of depth. Every successful fetch counts — including a page skipped as unchanged by the freshness store (which yields no new chunks). Fetches that 404, time out, or otherwise fail do not count toward it |
+| `max_attempts` | `max_pages × 10` | Hard cap on fetch attempts, bounding how many dead links the crawl chases while reaching `max_pages` fetches |
 | `same_domain_only` | `True` | When `True`, only follows links on the host the seed **resolves to** (after redirects); the original seed host is also kept in scope |
 | `collection` | pipeline default | Collection to ingest into |
 | `max_workers` | `10` | Thread pool size for concurrent fetching within each BFS level; set via `BLUE_WEB_MAX_WORKERS` env var or `WebDataSource(max_workers=N)` |
@@ -48,12 +48,15 @@ The crawler uses a queue-based BFS:
    seed that redirects apex → www or to an alias host still crawls the resolved site
 5. Enqueue unseen links at `depth + 1` if `depth + 1 ≤ max_depth`
 6. Ingest the fetched page through `WebPipeline` using the already-fetched HTML (no double fetch)
-7. Repeat until the queue is empty, `max_pages` imports are reached, or `max_attempts` fetches are made
+7. Repeat until the queue is empty, `max_pages` successful fetches are reached, or `max_attempts` fetches are made
 
-Only pages that successfully import count toward `max_pages`, so a handful of dead
-links ahead of live ones no longer exhausts the budget; `max_attempts` bounds the
-total fetches so an all-dead-links page can't loop forever. The seed URL is always
-crawled regardless of robots.txt (see [features](features.md)).
+Every successful fetch counts toward `max_pages` — including a page the freshness
+store skips as unchanged (it yields no new chunks but was still fetched), so
+re-crawling an unchanged site stays bounded to ~`max_pages` instead of climbing
+each run (#100). Fetches that 404, time out, or otherwise fail do **not** count, so
+a handful of dead links ahead of live ones no longer exhausts the budget;
+`max_attempts` bounds the total fetches so an all-dead-links page can't loop forever.
+The seed URL is always crawled regardless of robots.txt (see [features](features.md)).
 
 ### URL normalisation
 

@@ -212,10 +212,14 @@ class WebCrawler:
         Args:
             seed_url: Starting URL.
             depth: How many link-hops to follow (0 = seed only, 1 = seed + its links, …).
-            max_pages: Maximum number of pages to successfully **import**. Only pages
-                that yield chunks count toward it — a fetch that 404s, times out, or
-                extracts no content does not consume the budget, so a few dead links
-                no longer starve the crawl (#52).
+            max_pages: Maximum number of pages to successfully **fetch**. Every page
+                whose fetch succeeds counts toward it — including a page skipped as
+                unchanged by the freshness store (which yields no new chunks). A fetch
+                that 404s, times out, or otherwise fails does **not** consume the
+                budget, so a few dead links still can't starve the crawl (#52).
+                Counting successful fetches (not just imports) keeps a re-crawl of an
+                unchanged site bounded to ~max_pages instead of climbing each run until
+                it exhausts ``max_attempts`` (#100).
             collection: Vector store collection to upsert into.
             max_attempts: Hard cap on fetch attempts, bounding how many dead links the
                 crawl will chase while trying to reach ``max_pages`` imports. Defaults
@@ -232,14 +236,14 @@ class WebCrawler:
         # redirects (added once the seed has been fetched).
         allowed_netlocs: Set[str] = {urlparse(seed_url).netloc}
         seen: Set[str] = {_normalise(seed_url)}
-        ingested = 0
+        fetched = 0  # pages successfully fetched — the max_pages budget (#100)
         attempts = 0
         all_chunks: List[dict] = []
 
         current_level = [seed_url]
 
         for current_depth in range(depth + 1):
-            if not current_level or ingested >= max_pages or attempts >= max_attempts:
+            if not current_level or fetched >= max_pages or attempts >= max_attempts:
                 break
 
             # The seed (depth 0) is exempt from the robots allow-check: the caller
@@ -263,12 +267,13 @@ class WebCrawler:
             next_level_links: List[str] = []
             queue = deque(eligible)
 
-            # Drain this level in budget-sized batches. Only pages that actually
-            # import (produce chunks) count toward max_pages, so failed fetches are
-            # skipped over rather than consuming page slots (#52); total fetches stay
-            # bounded by max_attempts so endless dead links can't hang the crawl.
-            while queue and ingested < max_pages and attempts < max_attempts:
-                batch_size = min(max_pages - ingested, max_attempts - attempts, len(queue))
+            # Drain this level in budget-sized batches. Every successful fetch counts
+            # toward max_pages — including freshness-skipped unchanged pages, so a
+            # re-crawl stays bounded (#100) — while failed fetches are skipped over
+            # rather than consuming page slots (#52); total fetches stay bounded by
+            # max_attempts so endless dead links can't hang the crawl.
+            while queue and fetched < max_pages and attempts < max_attempts:
+                batch_size = min(max_pages - fetched, max_attempts - attempts, len(queue))
                 batch = [queue.popleft() for _ in range(batch_size)]
                 attempts += len(batch)
 
@@ -283,8 +288,13 @@ class WebCrawler:
                             chunks, links, final_url = future.result()
                         except Exception:
                             continue
+                        # A non-None final_url means the fetch succeeded; it counts
+                        # toward max_pages even when the page yielded no new chunks
+                        # (unchanged/duplicate/no-content). Failed fetches return
+                        # final_url=None and don't consume the budget (#52, #100).
+                        if final_url is not None:
+                            fetched += 1
                         if chunks:
-                            ingested += 1
                             all_chunks.extend(chunks)
                         next_level_links.extend(links)
                         # Once the seed is fetched, add the host it resolved to so its

@@ -600,3 +600,47 @@ def test_crawl_max_attempts_bounds_dead_link_fetches():
 
     # seed + at most (max_attempts - 1) dead-link attempts, never all 50.
     assert fetcher.fetch.call_count <= 10
+
+
+# #100: re-crawling an unchanged site must stay bounded to ~max_pages
+
+
+def test_recrawl_unchanged_stays_bounded_to_max_pages():
+    # Seed links to many pages; a freshness store makes re-ingest yield no chunks.
+    # A successful fetch counts toward max_pages even with no new chunks, so each
+    # re-crawl fetches ~max_pages instead of climbing toward max_attempts (#100).
+    n = 30
+    home = ('<html><body><article><p>home</p>'
+            + "".join(f'<a href="/p{i}">x</a>' for i in range(n))
+            + '</article></body></html>')
+    doc = "<html><body><article><p>doc</p></article></body></html>"
+    url_map = {_BASE + "/": home}
+    for i in range(n):
+        url_map[_BASE + f"/p{i}"] = doc
+
+    # Simulate a freshness store: a URL yields chunks the first time it is ingested
+    # and nothing on every later ingest.
+    seen: set = set()
+
+    def _ingest(url, collection=None, _fetch_result=None):
+        if url in seen:
+            return []
+        seen.add(url)
+        return [{"url": url, "chunk_id": f"{url}_0", "text": "t"}]
+
+    pipeline = MagicMock()
+    pipeline.ingest.side_effect = _ingest
+    fetcher = _make_fetcher(url_map)
+    crawler = _crawler(pipeline, fetcher)
+
+    crawler.crawl(_BASE + "/", depth=1, max_pages=5)
+    first = fetcher.fetch.call_count
+    assert first == 5  # seed + 4 links
+
+    fetcher.fetch.reset_mock()
+    crawler.crawl(_BASE + "/", depth=1, max_pages=5)
+    second = fetcher.fetch.call_count
+
+    # The re-crawl of the now-unchanged site must not escalate (pre-fix it would
+    # fetch far more, chasing chunk-producing pages up to max_attempts).
+    assert second == first

@@ -71,7 +71,7 @@ blue-web crawl https://example.com --allow-external
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--depth N` | `1` | Crawl depth from the seed URL |
-| `--max-pages N` | `10` | Hard cap on pages ingested |
+| `--max-pages N` | `10` | Hard cap on pages successfully fetched (unchanged pages skipped by the freshness store still count; failed fetches don't) |
 | `--allow-external` | off | Follow links outside the seed domain (MCP equivalent: `same_domain_only=False`) |
 | `--collection` | `$BLUE_WEB_COLLECTION` or `web` | Collection name |
 
