@@ -58,8 +58,14 @@ All variables are read once at startup during singleton construction. Changing t
 cd platform/web-api
 pip install -e ".[dev]"
 BLUE_WEB_REDIS_HOST=localhost BLUE_WEB_EMBEDDING=openai OPENAI_API_KEY=sk-... \
-  uvicorn web_api.main:app --reload --host 0.0.0.0 --port 8002
+BLUE_WEB_API_KEY=choose-a-secret \
+  uvicorn web_api.main:app --reload --port 8002   # binds 127.0.0.1 by default
 ```
+
+The server binds loopback (`127.0.0.1`) by default and requires `BLUE_WEB_API_KEY`
+on every data route. Only bind `--host 0.0.0.0` behind a trusted proxy/network
+boundary, and always with `BLUE_WEB_API_KEY` set. See the API reference
+[Security & binding](../docs/api.md#security--binding).
 
 ### Docker
 
@@ -69,14 +75,17 @@ WORKDIR /app
 COPY . .
 RUN pip install -e "lib/[openai]" && pip install -e "platform/web-api/"
 EXPOSE 8002
+# 0.0.0.0 is required inside the container so published traffic reaches the app;
+# the container must sit behind a trusted boundary and BLUE_WEB_API_KEY must be set.
 CMD ["uvicorn", "web_api.main:app", "--host", "0.0.0.0", "--port", "8002"]
 ```
 
 ```bash
-docker run -p 8002:8002 \
+docker run -p 127.0.0.1:8002:8002 \
   -e BLUE_WEB_REDIS_HOST=redis \
   -e BLUE_WEB_EMBEDDING=openai \
   -e OPENAI_API_KEY=sk-... \
+  -e BLUE_WEB_API_KEY=choose-a-secret \
   blue-data-web-api
 ```
 

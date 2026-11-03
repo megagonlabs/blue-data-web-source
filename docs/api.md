@@ -2,18 +2,53 @@
 
 The REST API is a thin FastAPI adapter over `WebDataSource`. All business logic lives in the library — the API translates HTTP requests into `execute_query` calls and wraps the results.
 
-**Base URL:** `http://localhost:8002`  
-**Content-Type:** `application/json`
+**Base URL:** `http://127.0.0.1:8002`  
+**Content-Type:** `application/json` (required on state-changing routes — see below)
 
 Start the server:
 
 ```bash
 pip install -e lib/ -e platform/web-api/
 BLUE_WEB_REDIS_HOST=localhost BLUE_WEB_EMBEDDING=openai OPENAI_API_KEY=sk-... \
-  uvicorn web_api.main:app --host 0.0.0.0 --port 8002
+BLUE_WEB_API_KEY=choose-a-secret \
+  blue-data-web-api          # binds 127.0.0.1:8002 by default
 ```
 
 See [Installation](installation.md) for environment variables and Docker instructions.
+
+## Security & binding
+
+The service uses the shared `blue_data.server` policy. By default it binds
+**loopback only** and every data route requires an API key.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `BLUE_WEB_API_HOST` | `127.0.0.1` | Bind host — loopback only unless overridden |
+| `BLUE_WEB_API_PORT` | `8002` | Bind port (family port map: registry 8000, doc 8001, web 8002) |
+| `BLUE_WEB_API_KEY` | _(unset)_ | Required on every data route; send as `X-API-Key: <key>` or `Authorization: Bearer <key>`. With no key configured, data routes return **401** |
+| `BLUE_WEB_API_AUTH_DISABLED` | _(unset)_ | Set truthy (`1`/`true`/`yes`) to run with no API key (local/dev only) |
+
+- **Authentication** — send the key on every data route (everything except
+  `GET /web/health` and the docs routes `/docs`, `/redoc`, `/openapi.json`):
+
+  ```bash
+  curl -X POST http://127.0.0.1:8002/web/search \
+    -H "X-API-Key: $BLUE_WEB_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{"query": "climate targets 2026", "k": 5}'
+  ```
+
+  All examples below omit the headers for brevity; send `X-API-Key` (or
+  `Authorization: Bearer`) and `Content-Type: application/json` on each.
+
+- **`401 Unauthorized`** — returned by every data route when the API key is
+  missing or wrong (or when no key is configured on the server).
+- **`415 Unsupported Media Type`** — state-changing routes
+  (`POST`/`PUT`/`PATCH`/`DELETE`) require an `application/json` body; form,
+  multipart, or text bodies are refused (CSRF protection).
+
+> The default bind is loopback. Set `BLUE_WEB_API_HOST=0.0.0.0` only behind a
+> trusted proxy or network boundary, and always with `BLUE_WEB_API_KEY` set.
 
 **Library-only operations (no REST route):** `WEB.FIND`, `WEB.FIND_THEN_SEARCH`, `WEB.GRAPH_NEIGHBORS`, `WEB.GRAPH_QUERY`. These require `RecordStore` and `GraphSource` components not wired by `WebDataSource.from_env()`. Use these ops directly through the Python library.
 
@@ -193,7 +228,9 @@ Fetch a URL and extract typed fields using a caller-supplied JSON Schema. Statel
 
 ## `POST /web/search`
 
-Semantic search over ingested pages. Requires Redis and an indexed collection.
+Semantic search over previously ingested pages. Call `POST /web/ensure-index`
+and ingest into the collection first (an in-memory store works; Redis is only
+needed for persistence across restarts).
 
 **Request**
 ```json
@@ -216,14 +253,16 @@ Semantic search over ingested pages. Requires Redis and an indexed collection.
       "domain": "example.com",
       "title": "Climate targets ...",
       "text": "...",
-      "score": 0.94
+      "score": 0.08
     }
   ],
   "count": 5
 }
 ```
 
-**Error `400`** — no vector store configured.
+`score` is a **cosine distance — lower is better** (an exact match is `0.0`); it
+is not a similarity. Results are returned nearest-first. Searching an empty or
+unindexed collection returns `{"results": [], "count": 0}` with `200`.
 
 ---
 
@@ -233,7 +272,7 @@ Live web search via Tavily — fetch, ingest, and rank in one call. No prior ing
 
 **Request**
 ```json
-{"query": "2026 greenhouse gas targets", "k": 5, "top_k": 3, "collection": "research"}
+{"query": "2026 greenhouse gas targets", "k": 5, "top_k": 3, "scope": "current_search_results", "collection": "research"}
 ```
 
 | Field | Type | Default | Description |
@@ -241,8 +280,7 @@ Live web search via Tavily — fetch, ingest, and rank in one call. No prior ing
 | `query` | string | required | Search query |
 | `k` | int | `5` | URLs to fetch from Tavily |
 | `top_k` | int | `5` | Chunks to return after semantic ranking |
+| `scope` | string | `"current_search_results"` | `"current_search_results"` ranks only the pages this search fetched; `"collection"` ranks over the whole ingested corpus (#35) |
 | `collection` | string | env default | Collection to store results |
 
-**Response `200`** — same structure as `/web/search`.
-
-**Error `400`** — no vector store configured.
+**Response `200`** — same structure as `/web/search` (`score` is a cosine distance, lower is better).
