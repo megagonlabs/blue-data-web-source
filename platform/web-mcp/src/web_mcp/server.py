@@ -174,7 +174,7 @@ def ingest_urls(
 def crawl_site(
     url: Annotated[str, Field(description="Seed URL for the BFS crawl.")],
     depth: Annotated[int, Field(description="Maximum hop depth from the seed URL.", ge=1)] = 1,
-    max_pages: Annotated[int, Field(description="Hard cap on pages ingested regardless of depth.", ge=1)] = 10,
+    max_pages: Annotated[int, Field(description="Hard cap on pages successfully fetched, regardless of depth. Unchanged pages skipped by the freshness store still count; failed fetches (404s/errors) don't.", ge=1)] = 10,
     same_domain_only: Annotated[bool, Field(
         description="Restrict crawl to the seed URL's domain (default True). "
                     "CLI equivalent: absence of the --allow-external flag.",
@@ -184,8 +184,10 @@ def crawl_site(
     """BFS-crawl a site starting from a seed URL and ingest all reachable pages.
 
     Follows links up to `depth` hops from the seed. Stops after `max_pages`
-    pages regardless of depth. When `same_domain_only` is True (default), only
-    follows links within the seed URL's domain.
+    successfully fetched pages regardless of depth (pages the freshness store
+    skips as unchanged still count; failed fetches don't). When
+    `same_domain_only` is True (default), only follows links within the seed
+    URL's domain.
 
     Returns the total chunk count and list of ingested URLs.
     """

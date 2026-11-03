@@ -101,7 +101,7 @@ BFS-crawl a site from a seed URL and ingest all reachable pages. Respects `robot
 |-------|------|---------|-------------|
 | `url` | string | required | Seed URL |
 | `depth` | int | `1` | Hops from seed to follow |
-| `max_pages` | int | `10` | Hard cap on pages ingested |
+| `max_pages` | int | `10` | Hard cap on pages successfully fetched (unchanged pages skipped by the freshness store still count; failed fetches don't) |
 | `same_domain_only` | bool | `true` | Restrict crawl to seed domain |
 | `collection` | string | env default | Target collection |
 
