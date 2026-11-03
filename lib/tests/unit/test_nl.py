@@ -416,7 +416,12 @@ def _ingest_llm_fn(url):
 
 
 def _memory_source():
-    source = WebDataSource(properties={"embedding": "dummy", "vector": "memory", "freshness": "none"})
+    # These tests fetch a throwaway 127.0.0.1 server, so opt in to loopback — the
+    # fetch destination policy blocks internal addresses by default (#112).
+    source = WebDataSource(properties={
+        "embedding": "dummy", "vector": "memory", "freshness": "none",
+        "fetch_allow_private": True,
+    })
     source.execute_query({"op": "WEB.ENSURE_INDEX"})
     return source
 

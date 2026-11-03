@@ -183,6 +183,14 @@ def test_extract_raises_without_schema():
         source.execute_query({"op": "WEB.EXTRACT", "url": "https://example.com"})
 
 
+def test_extract_rejects_too_many_urls():
+    # One LLM call per URL — bound the batch to limit model cost / fetch fan-out (#112).
+    source = _make_source()
+    too_many = [f"https://example.com/{i}" for i in range(source._MAX_EXTRACT_URLS + 1)]
+    with pytest.raises(ValueError, match="at most"):
+        source.execute_query({"op": "WEB.EXTRACT", "urls": too_many, "schema": _SCHEMA})
+
+
 def test_extract_calls_structured_field_extractor():
     source = _make_source_with_real_pipeline()
     source._pipeline._fetcher.fetch.return_value = _make_fetch_result()

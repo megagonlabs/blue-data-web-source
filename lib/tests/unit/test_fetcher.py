@@ -113,7 +113,12 @@ def test_fetch_default_timeout_is_30_seconds():
         fetcher = WebFetcher()  # no explicit timeout — should default to 30s
         fetcher.fetch("https://example.com")
 
-        mock_client_cls.assert_called_once_with(timeout=30.0, follow_redirects=True)
+        mock_client_cls.assert_called_once()
+        kwargs = mock_client_cls.call_args.kwargs
+        assert kwargs["timeout"] == 30.0
+        assert kwargs["follow_redirects"] is True
+        # A destination-policy transport is attached so SSRF checks run per hop (#112).
+        assert "transport" in kwargs
 
 
 def test_fetch_configures_timeout():
@@ -128,4 +133,9 @@ def test_fetch_configures_timeout():
         fetcher = WebFetcher(timeout=30.0)
         fetcher.fetch("https://example.com")
 
-        mock_client_cls.assert_called_once_with(timeout=30.0, follow_redirects=True)
+        mock_client_cls.assert_called_once()
+        kwargs = mock_client_cls.call_args.kwargs
+        assert kwargs["timeout"] == 30.0
+        assert kwargs["follow_redirects"] is True
+        # A destination-policy transport is attached so SSRF checks run per hop (#112).
+        assert "transport" in kwargs

@@ -18,6 +18,7 @@ from blue_data_doc_source.source.document.schema.base import DocumentClassifier,
 from blue_data_doc_source.source.document.schema.schema_store import MemoryRecordStore, RecordStore, _get_nested
 
 from .extractor import WebExtractor
+from .fetch_policy import DestinationPolicy
 from .fetcher import FetchResult, WebFetcher
 from .freshness import FreshnessStore
 from .metadata import MetadataExtractor
@@ -93,8 +94,17 @@ class WebPipeline:
         graph_source: Optional[Any] = None,
         graph_database: str = "web",
         ingest_delay: float = 0.0,
+        fetch_allow_private: bool = False,
+        fetch_allowlist: Optional[Sequence[str]] = None,
     ):
-        self._fetcher = WebFetcher(timeout=timeout)
+        # Destination policy for every server-side fetch (ingest/crawl/feed/
+        # search-web/extract). Refuses loopback/private/link-local/metadata
+        # addresses by default; opt in to internal fetches via the allow-list or
+        # allow_private (#112).
+        policy = DestinationPolicy(
+            allow_private=fetch_allow_private, allowlist=fetch_allowlist
+        )
+        self._fetcher = WebFetcher(timeout=timeout, policy=policy)
         self._extractor = WebExtractor()
         self._metadata_extractor = MetadataExtractor()
         self._chunker = chunker or SectionChunker(chunk_size=chunk_size, overlap=overlap)
