@@ -28,10 +28,10 @@
 
      3 chunks  |  climate.example.com  |  Climate Policy Report 2026
            chunk IDs: web_cb9904393a53c312_chunk_0000 … web_cb9904393a53c312_chunk_0002
-     4 chunks  |  insurance.example.com  |  Health Insurance Policy Summary
-           chunk IDs: web_6025b6c4593d7883_chunk_0000 … web_6025b6c4593d7883_chunk_0003
      1 chunks  |  text.npr.org  |  China test-launches a ballistic missile in the Sou
            chunk IDs: web_a809489b601142ed_chunk_0000 … web_a809489b601142ed_chunk_0000
+     4 chunks  |  insurance.example.com  |  Health Insurance Policy Summary
+           chunk IDs: web_6025b6c4593d7883_chunk_0000 … web_6025b6c4593d7883_chunk_0003
 
   STEP 2 — Verify chunk structure for each article
 ────────────────────────────────────────────────────────────────────
@@ -44,19 +44,19 @@
     desc (c0): An overview of global climate policy developments in 2026.…
     desc on later chunks: none ✓
 
+  text.npr.org
+    title    : China test-launches a ballistic missile in the South Pacific and raises regional concerns
+    date     : 2026-07-07
+    chunks   : 1  (index 0 … 0)
+    chunk 0  : web_a809489b601142ed_chunk_0000
+    desc on later chunks: none ✓
+
   insurance.example.com
     title    : Health Insurance Policy Summary
     date     : —
     chunks   : 4  (index 0 … 3)
     chunk 0  : web_6025b6c4593d7883_chunk_0000
     desc (c0): Summary of health plan benefits and coverage details.…
-    desc on later chunks: none ✓
-
-  text.npr.org
-    title    : China test-launches a ballistic missile in the South Pacific and raises regional concerns
-    date     : 2026-07-07
-    chunks   : 1  (index 0 … 0)
-    chunk 0  : web_a809489b601142ed_chunk_0000
     desc on later chunks: none ✓
 
   STEP 3 — Search across all ingested articles
