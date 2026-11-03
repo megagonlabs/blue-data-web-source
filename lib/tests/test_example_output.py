@@ -94,7 +94,7 @@ SKIP_REQUIRES = [
     (_EXAMPLES / "backends" / "redis_backend_demo.py",           "Redis Stack"),
     (_EXAMPLES / "integration-demos" / "search_web_demo.py",     "TAVILY_API_KEY + OPENAI_API_KEY"),
     (_EXAMPLES / "framework-demos" / "langgraph_rag_demo.py",    "OPENAI_API_KEY + langgraph"),
-    (_EXAMPLES / "framework-demos" / "mcp_demo.py",              "OPENAI_API_KEY + Redis + MCP server"),
+    (_EXAMPLES / "framework-demos" / "mcp_demo.py",              "OPENAI_API_KEY + langchain-mcp-adapters (spawns its own MCP server)"),
 ]
 
 

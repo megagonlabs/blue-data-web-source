@@ -112,19 +112,19 @@ TAVILY_API_KEY=tvly-... python3 examples/integration-demos/search_web_demo.py --
 | Demo | What it shows | Deps |
 |---|---|---|
 | `framework-demos/langgraph_rag_demo.py` | Two-node RAG graph: [retrieve] → [generate] → END; grounded answers | OpenAI, langgraph |
-| `framework-demos/mcp_demo.py` | LLM agent calling web-mcp tools: ensure_index, ingest_url, search | OpenAI, langchain-mcp-adapters, langgraph, MCP server |
+| `framework-demos/mcp_demo.py` | LLM agent calling web-mcp tools: ensure_index, ingest_url, search | OpenAI, langchain-mcp-adapters>=0.1, langgraph |
 
 ```bash
-pip install langgraph langchain-openai
+pip install "langchain-mcp-adapters>=0.1" langgraph langchain-openai
 
 # LangGraph RAG (no MCP server needed):
 OPENAI_API_KEY=sk-... python3 examples/framework-demos/langgraph_rag_demo.py
 
-# MCP agent — start the server first:
-cd platform/web-mcp
-BLUE_WEB_EMBEDDING=openai OPENAI_API_KEY=sk-... BLUE_WEB_REDIS_HOST=localhost python platform/web-mcp/src/web_mcp/server.py
-# then in another terminal:
-OPENAI_API_KEY=sk-... python3 examples/framework-demos/mcp_demo.py
+# MCP agent — the demo spawns the web-mcp server itself over stdio, so there is
+# no separate server to start. Configure the server through this process's
+# environment (embedding backend, Redis host, API key):
+BLUE_WEB_EMBEDDING=openai BLUE_WEB_REDIS_HOST=localhost OPENAI_API_KEY=sk-... \
+  python3 examples/framework-demos/mcp_demo.py
 ```
 
 ---
