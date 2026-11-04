@@ -505,33 +505,39 @@ class WebDataSource(DataSource):
         k = request.get("k", 5)
         top_k = request.get("top_k", k)
         urls = self._search_provider.search(query, k=k)
-        # Ingest via ingest_many so a single bad result URL (403/404/timeout/no
-        # content) is skipped instead of aborting the whole op — ingest_many
-        # isolates per-URL failures (and ingests concurrently). A plain loop here
-        # would let one exception propagate and lose every other result.
-        records = self._pipeline.ingest_many(urls, collection=collection)
+        # Ingest via ingest_many_results so a single bad result URL
+        # (403/404/timeout/no content) is skipped instead of aborting the whole op,
+        # AND we learn each page's outcome: a page skipped as unchanged or deduped
+        # produced no new chunks but is still one of this search's result pages and
+        # must be ranked (#122). ingest_many isolates per-URL failures and ingests
+        # concurrently.
+        results = self._pipeline.ingest_many_results(urls, collection=collection)
         if urls:
-            ingested_urls = {r["url"] for r in records}
-            if len(ingested_urls) < len(urls):
+            ok = sum(1 for r in results if r.ok)
+            if ok < len(urls):
                 _log.info(
-                    "WEB.SEARCH_WEB: ingested chunks from %d of %d result URL(s); "
-                    "the rest failed, were empty, or were unchanged",
-                    len(ingested_urls), len(urls),
+                    "WEB.SEARCH_WEB: %d of %d result URL(s) fetched; the rest "
+                    "failed or were empty",
+                    ok, len(urls),
                 )
 
         if scope == "collection":
             # Rank over everything ever ingested into the collection.
             return self._pipeline.search(query, k=top_k, collection=collection)
 
-        # Default: rank only within the pages this search actually ingested, so a
-        # live web search never surfaces an old, unrelated page that merely happens
-        # to be in the collection (#35). Scope is the distinct page_ids from this
-        # call's records; a result page skipped as unchanged by freshness tracking
-        # is not re-added here — pass scope="collection" to rank over the corpus.
+        # Default: rank only within the pages this search returned, so a live web
+        # search never surfaces an old, unrelated page that merely happens to be in
+        # the collection (#35). Scope is the distinct page_ids of every page this
+        # search fetched successfully — including ones skipped as unchanged, and
+        # duplicates (whose content lives under the page that owns the text,
+        # ``duplicate_of``). Only genuine failures (no content / fetch error) are
+        # excluded (#122).
         page_ids: List[str] = []
         seen: set = set()
-        for record in records:
-            page_id = record.get("page_id")
+        for r in results:
+            if not r.ok:
+                continue
+            page_id = r.duplicate_of or r.page_id
             if page_id and page_id not in seen:
                 seen.add(page_id)
                 page_ids.append(page_id)
