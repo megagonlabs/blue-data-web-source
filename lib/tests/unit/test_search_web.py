@@ -7,6 +7,7 @@ from blue_data.source.vector.memory_vector_source import MemoryVectorSource
 from blue_data_doc_source.source.document.embeddings.dummy_embedding import DummyEmbeddingModel
 
 from blue_data_web_source import WebDataSource
+from blue_data_web_source.source.web.freshness import MemoryFreshnessStore
 from blue_data_web_source.source.web.search_provider import TavilySearchProvider, WebSearchProvider
 
 
@@ -238,3 +239,51 @@ def test_search_web_rejects_unknown_scope():
     source.execute_query({"op": "WEB.ENSURE_INDEX"})
     with pytest.raises(ValueError, match="scope"):
         source.execute_query({"op": "WEB.SEARCH_WEB", "query": "x", "scope": "bogus"})
+
+
+# ── #122: with a freshness store, result pages with no new chunks must still rank ──
+
+_LENS_HTML = (
+    "<html><body><article><p>Fresnel lenses project a narrow beam across the sea.</p>"
+    "</article></body></html>"
+)
+
+
+def _fresh_source(urls):
+    return WebDataSource(
+        name="test",
+        embedding_model=DummyEmbeddingModel(dim=8),
+        vector_source=MemoryVectorSource(),
+        default_collection="web",
+        search_provider=_mock_provider(urls),
+        freshness_store=MemoryFreshnessStore(),
+    )
+
+
+def test_search_web_repeated_still_returns_result_page(httpx_mock):
+    # The 2nd identical search re-fetches the page, the freshness store reports it
+    # unchanged (no new chunks), but it is still a result page and must rank (#122).
+    for _ in range(2):
+        httpx_mock.add_response(
+            url="https://example.com/a", status_code=200,
+            text=_LENS_HTML, headers={"content-type": "text/html"},
+        )
+    source = _fresh_source(["https://example.com/a"])
+    source.execute_query({"op": "WEB.ENSURE_INDEX"})
+    op = {"op": "WEB.SEARCH_WEB", "query": "fresnel lens", "k": 3}
+    assert len(source.execute_query(dict(op))) > 0
+    assert len(source.execute_query(dict(op))) > 0  # pre-fix: 0
+
+
+def test_search_web_includes_already_imported_result_page(httpx_mock):
+    # A result page already in the collection (unchanged) must still be ranked (#122).
+    for _ in range(2):  # one for the pre-import INGEST, one for the search fetch
+        httpx_mock.add_response(
+            url="https://example.com/a", status_code=200,
+            text=_LENS_HTML, headers={"content-type": "text/html"},
+        )
+    source = _fresh_source(["https://example.com/a"])
+    source.execute_query({"op": "WEB.ENSURE_INDEX"})
+    source.execute_query({"op": "WEB.INGEST", "url": "https://example.com/a"})
+    results = source.execute_query({"op": "WEB.SEARCH_WEB", "query": "fresnel lens", "k": 3})
+    assert len(results) > 0
