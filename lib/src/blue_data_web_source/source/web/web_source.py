@@ -559,13 +559,23 @@ class WebDataSource(DataSource):
                 "Install with: pip install 'blue-data-web-source[openai]'"
             ) from exc
 
-        extractor = StructuredFieldExtractor(schema=schema)
+        # strict=False: a schema applied across varied pages routinely hits optional
+        # fields a given page doesn't mention (the model answers null). Strict
+        # validation would reject the whole result — and abort a whole `urls` batch —
+        # losing the fields that *were* found. Return best-effort instead, dropping
+        # null-valued fields and the reserved validation key so only found fields
+        # remain (#121).
+        extractor = StructuredFieldExtractor(schema=schema, strict=False)
+
+        def _clean(fields: Dict[str, Any]) -> Dict[str, Any]:
+            return {k: v for k, v in fields.items() if k != "_validation" and v is not None}
+
         def _extract_one(target_url: str) -> Dict[str, Any]:
             fetch_result = self._pipeline._fetcher.fetch(target_url)
             extract_result = self._pipeline._extractor.extract(fetch_result.html, fetch_result.final_url)
             if extract_result is None or not extract_result.text.strip():
                 return {}
-            return extractor.extract(extract_result.text, document_type="web_page")
+            return _clean(extractor.extract(extract_result.text, document_type="web_page"))
 
         if url:
             return _extract_one(url)
