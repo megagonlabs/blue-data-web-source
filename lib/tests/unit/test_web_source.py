@@ -209,9 +209,60 @@ def test_extract_calls_structured_field_extractor():
             "schema": _SCHEMA,
         })
 
-    MockSFE.assert_called_once_with(schema=_SCHEMA)
+    # strict=False so one optional field a page omits can't abort the call (#121).
+    MockSFE.assert_called_once_with(schema=_SCHEMA, strict=False)
     mock_extractor_instance.extract.assert_called_once()
     assert result == {"title": "Widget", "price": 29.99}
+
+
+def test_extract_drops_null_optional_fields_and_validation_key():
+    # An optional field the page doesn't mention comes back null (and, in non-strict
+    # mode, with a reserved "_validation" key). WEB.EXTRACT must return only the
+    # fields that were found, not fail the whole call (#121).
+    source = _make_source_with_real_pipeline()
+    source._pipeline._fetcher.fetch.return_value = _make_fetch_result()
+    source._pipeline._extractor.extract.return_value = _make_extract_result()
+
+    mock_extractor_instance = MagicMock()
+    mock_extractor_instance.extract.return_value = {
+        "title": "Widget",
+        "price": None,
+        "_validation": {"status": "invalid", "errors": ["price: None is not of type 'number'"]},
+    }
+    with patch(
+        "blue_data_doc_source.source.document.schema.StructuredFieldExtractor",
+        return_value=mock_extractor_instance,
+    ):
+        result = source.execute_query({
+            "op": "WEB.EXTRACT",
+            "url": "https://example.com",
+            "schema": _SCHEMA,
+        })
+    assert result == {"title": "Widget"}
+
+
+def test_extract_batch_one_bad_page_does_not_abort():
+    # In a urls batch, a page missing an optional field must not sink the others (#121).
+    source = _make_source_with_real_pipeline()
+    source._pipeline._fetcher.fetch.return_value = _make_fetch_result()
+    source._pipeline._extractor.extract.return_value = _make_extract_result()
+
+    mock_extractor_instance = MagicMock()
+    mock_extractor_instance.extract.side_effect = [
+        {"title": "A", "price": 10.0},
+        {"title": "B", "price": None, "_validation": {"status": "invalid", "errors": ["..."]}},
+    ]
+    with patch(
+        "blue_data_doc_source.source.document.schema.StructuredFieldExtractor",
+        return_value=mock_extractor_instance,
+    ):
+        result = source.execute_query({
+            "op": "WEB.EXTRACT",
+            "urls": ["https://a.com", "https://b.com"],
+            "schema": _SCHEMA,
+        })
+    assert result[0] == {"title": "A", "price": 10.0, "url": "https://a.com"}
+    assert result[1] == {"title": "B", "url": "https://b.com"}
 
 
 def test_extract_returns_empty_when_no_content():
