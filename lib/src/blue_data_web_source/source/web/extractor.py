@@ -30,22 +30,87 @@ def _strip_nav_fragments(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
 
 
-# Inline emphasis/code markers trafilatura leaves in markdown body text. We keep
-# the ATX heading markers (``#``) — SectionChunker needs them to detect sections
-# (#97) — but unwrap bold/italic/code so the stored chunk text reads cleanly.
-_EMPHASIS_RES = (
-    (re.compile(r"\*\*\*(.+?)\*\*\*"), r"\1"),  # ***bold italic***
-    (re.compile(r"\*\*(.+?)\*\*"), r"\1"),       # **bold**
-    (re.compile(r"\*(.+?)\*"), r"\1"),           # *italic*
-    (re.compile(r"`(.+?)`"), r"\1"),             # `code`
-)
+# Render trafilatura's XML (not markdown) so page text stays literal. Markdown
+# output on trafilatura >= 2.2 backslash-escapes literal ``_ [ ] < *`` and wraps
+# code in backticks, and there is no reliable way to tell a literal ``*`` from
+# emphasis — corrupting identifiers, code and search/content_hash (#123). The XML
+# keeps ``<p>``/``<code>``/``<item>`` text verbatim and marks headings with a
+# ``rend="hN"`` level, which we turn into an ATX ``## Heading`` line so
+# SectionChunker still detects sections (#97).
 
 
-def _strip_markdown_emphasis(text: str) -> str:
-    """Unwrap inline emphasis/code markers, preserving heading and list markers."""
-    for pattern, repl in _EMPHASIS_RES:
-        text = pattern.sub(repl, text)
-    return text
+def _head_level(rend: str | None) -> int:
+    """Map a ``<head rend="hN">`` value to a heading level (default 2)."""
+    if rend and len(rend) >= 2 and rend[0] in "hH" and rend[1:].isdigit():
+        return max(1, min(6, int(rend[1:])))
+    return 2
+
+
+def _inline_text(el) -> str:
+    """Flatten an element's text, unwrapping inline ``<hi>`` spans. Restores a
+    single space between adjacent inline children, which trafilatura's XML drops
+    (#123)."""
+    parts: list[str] = []
+    if el.text:
+        parts.append(el.text)
+    children = list(el)
+    for i, child in enumerate(children):
+        parts.append("".join(child.itertext()))
+        tail = child.tail or ""
+        if not tail and i + 1 < len(children):
+            parts.append(" ")  # adjacent inline spans with no separator in the XML
+        else:
+            parts.append(tail)
+    return "".join(parts).strip()
+
+
+def _render_block(el, out: list) -> None:
+    """Render one TEI-ish block element to text line(s), appended to *out*."""
+    tag = el.tag
+    if tag == "head":
+        text = _inline_text(el)
+        if text:
+            out.append("#" * _head_level(el.get("rend")) + " " + text)
+    elif tag == "p":
+        text = _inline_text(el)
+        if text:
+            out.append(text)
+    elif tag == "code":
+        code = "".join(el.itertext())  # verbatim — never reflow or strip code
+        if code.strip():
+            out.append(code)
+    elif tag == "list":
+        for item in el.findall("item"):
+            text = _inline_text(item)
+            if text:
+                out.append(text)
+    elif tag == "table":
+        for row in el.iter("row"):
+            cells = [_inline_text(c) for c in row.findall("cell")]
+            line = " | ".join(c for c in cells if c)
+            if line:
+                out.append(line)
+    else:
+        for child in el:  # unknown container — descend
+            _render_block(child, out)
+
+
+def _render_xml(xml: str) -> str:
+    """Render trafilatura XML to plain text, keeping literal characters and turning
+    headings into ATX lines. Blocks are separated by a blank line."""
+    from lxml import etree
+
+    try:
+        root = etree.fromstring(xml.encode("utf-8"))
+    except etree.XMLSyntaxError:
+        return ""
+    body = root.find("main")
+    if body is None:
+        return ""
+    out: list = []
+    for child in body:
+        _render_block(child, out)
+    return "\n\n".join(out)
 
 
 @dataclass
@@ -61,28 +126,25 @@ class ExtractResult:
 
 class WebExtractor:
     def extract(self, html: str, url: str) -> ExtractResult | None:
-        # Markdown (not "txt") so headings survive as ``## Heading`` lines —
-        # doc-source's SectionChunker only detects markdown/numbered/ALL-CAPS/
-        # underlined headers, and trafilatura's plain-text output drops or
-        # flattens headings, so section-aware chunking never fired on HTML
-        # pages (#97). Supported by trafilatura 1.9+ and 2.x.
-        text = trafilatura.extract(
+        # XML (not "markdown"/"txt") so page text is stored verbatim: markdown
+        # escapes literal characters and mangles code, and txt drops headings that
+        # SectionChunker needs. We render the XML ourselves — headings become ATX
+        # lines, body/code/list text stays literal (#123, keeping #97's sections).
+        xml = trafilatura.extract(
             html,
             url=url,
             include_comments=False,
             include_tables=True,
-            output_format="markdown",
+            output_format="xml",
+            include_formatting=True,  # keep <head> levels (and <hi> spans we unwrap)
         )
-        if not text:
+        if not xml:
             _log.debug("no extractable content from %s", url)
             return None
 
-        text = _strip_nav_fragments(text)
-        # Unwrap inline emphasis/code so stored chunk text is clean; heading
-        # markers are preserved for the chunker.
-        text = _strip_markdown_emphasis(text)
+        text = _strip_nav_fragments(_render_xml(xml))
         if not text:
-            _log.debug("no content after nav-fragment stripping: %s", url)
+            _log.debug("no content after rendering/nav-fragment stripping: %s", url)
             return None
 
         _log.debug("extracted %d chars from %s", len(text), url)

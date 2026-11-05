@@ -1,14 +1,14 @@
 (using local fixture: npr_article.html)
 Ingesting: https://text.npr.org/nx-s1-5884537
-  Stored 3 chunks
+  Stored 4 chunks
 
 Searching: "what happened with the missile test in the Pacific"
-[1] text.npr.org  score=0.2515  [China test-launches a ballistic missile in the South Pacific and raises regional concerns]
-    our long-standing concerns about this type of activity, China carried out the test within hours of informing us," Foreign Minister Winston Peters told The Associated Press in a statement. The launch t...
+[1] text.npr.org  score=0.0820  [Expert says it's a signal to the United States]
+    The concern is a result of a lack of clear information, said Drew Thompson, senior fellow at the S. Rajaratnam School of International Studies at Nanyang Technological University in Singapore: "China'...
 
-[2] text.npr.org  score=0.2722  [China test-launches a ballistic missile in the South Pacific and raises regional concerns]
-    By The Associated Press Tuesday, July 7, 2026 • 1:29 AM EDT BANGKOK — China's navy test-launched a long-range ballistic missile Monday from one of its nuclear-powered submarines in the South Pacific, ...
+[2] text.npr.org  score=0.2179  [Australia, Japan and New Zealand express criticism]
+    the relevant countries will avoid overinterpretation," a Ministry of Foreign Affairs spokesperson said. U.S. State Department spokesperson Thomas Pigott said while the U.S. was "working harder than ev...
 
-[3] text.npr.org  score=0.3057  [China test-launches a ballistic missile in the South Pacific and raises regional concerns]
-    Expert says it's a signal to the United States The concern is a result of a lack of clear information, said Drew Thompson, senior fellow at the S. Rajaratnam School of International Studies at Nanyang...
+[3] text.npr.org  score=0.2489  [Australia, Japan and New Zealand express criticism]
+    Beijing's militarization has drawn concerns, and Australia, Japan and New Zealand criticized the launch. The New Zealand government said it was informed hours beforehand and noted that the missile was...
 

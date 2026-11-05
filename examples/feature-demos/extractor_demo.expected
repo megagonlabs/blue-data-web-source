@@ -28,14 +28,14 @@
   date     : 2025-01-01
   language : —
   desc     : —
-  text len : 642 chars
+  text len : 676 chars
 
   ✓  No nav fragments in output
 
   First 3 non-empty lines of extracted text:
     # Semiconductor Shortage Update
     Global chip supply returned to balance in mid-2025 after a three
-    Asian fabs retained a dominant market share in leading-edge node
+    ## Regional Dynamics
 
   CASE: Login-wall redirect (returns None)
   URL : https://app.example.com/dashboard
