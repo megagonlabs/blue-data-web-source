@@ -16,9 +16,9 @@
   STEP 2 — Ingest articles
 ────────────────────────────────────────────────────────────
   ✓   3 chunks  |  climate.example.com  |  Climate Policy Report 2026
-  ✓   1 chunks  |  text.npr.org  |  China test-launches a ballistic missile in the South Pacific and raises regional concerns
+  ✓   3 chunks  |  text.npr.org  |  China test-launches a ballistic missile in the South Pacific and raises regional concerns
 
-  ✓  Total chunks stored: 4
+  ✓  Total chunks stored: 6
 
   STEP 3 — Chunk sample (chunk 0 of each article)
 ────────────────────────────────────────────────────────────
@@ -44,19 +44,19 @@
        title :    Climate Policy Report 2026
        text  :    Several major economies announced updated nationally determined contributions. T…
 
-  #2  score=0.1680  |  text.npr.org
+  #2  score=0.1059  |  text.npr.org
        title :    China test-launches a ballistic missile in the South Pacific and raises regional concerns
-       text  :    By The Associated Press Tuesday, July 7, 2026 • 1:29 AM EDT BANGKOK — China's na…
+       text  :    Beijing's militarization has drawn concerns, and Australia, Japan and New Zealan…
 
-  #3  score=0.1700  |  climate.example.com
-       title :    Climate Policy Report 2026
-       text  :    Renewable energy capacity additions reached a record high globally in 2025. Sola…
+  #3  score=0.1139  |  text.npr.org
+       title :    China test-launches a ballistic missile in the South Pacific and raises regional concerns
+       text  :    The concern is a result of a lack of clear information, said Drew Thompson, seni…
 
 
   SUMMARY
 ────────────────────────────────────────────────────────────
   ✓  Articles ingested : 2
-  ✓  Chunks stored     : 4
+  ✓  Chunks stored     : 6
   ✓  No API key required — fully offline
 
   Next step: swap DummyEmbeddingModel → OpenAIEmbeddingModel

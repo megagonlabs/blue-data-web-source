@@ -192,3 +192,36 @@ def test_ingest_html_sections_set_section_title():
     assert "Installation" in titles
     assert "Usage" in titles
     assert all("##" not in r["text"] and "**" not in r["text"] for r in records)
+
+
+# --- #123: literal characters must be stored verbatim (no markdown escaping) ---
+
+_PAD = ("<p>This introductory paragraph exists so the extractor treats the page as "
+        "an article with enough body text to keep.</p>")
+
+
+@pytest.mark.parametrize("fragment,expected", [
+    ("<p>Set the option max_retry_count now for the service to run.</p>", "max_retry_count"),
+    ("<p>The first array element a[0] and the check 1 &lt; 2 hold here today.</p>", "a[0]"),
+    ("<p>The first array element a[0] and the check 1 &lt; 2 hold here today.</p>", "1 < 2"),
+    ("<p>The total area is 2*3*4 square metres in this particular room today.</p>", "2*3*4"),
+    ("<p>The function signature is def run(*args, **kwargs) in the module today.</p>",
+     "def run(*args, **kwargs)"),
+    ("<p>Prices start at $10* on most of the orders in the region this year.</p>", "$10*"),
+])
+def test_extract_preserves_literal_characters(fragment, expected):
+    html = (f"<html><head><title>T</title></head><body><article><h1>T</h1>"
+            f"{_PAD}{fragment}{_PAD}</article></body></html>")
+    result = WebExtractor().extract(html, "https://example.test/a")
+    assert result is not None
+    assert expected in result.text
+
+
+def test_extract_keeps_code_block_verbatim():
+    html = ("<html><head><title>T</title></head><body><article><h1>T</h1>"
+            f"{_PAD}<pre>def area(w, h):\n    return w*h*2\nprint(area(*dims, **opts))</pre>"
+            f"{_PAD}</article></body></html>")
+    text = WebExtractor().extract(html, "https://example.test/a").text
+    assert "return w*h*2" in text
+    assert "print(area(*dims, **opts))" in text
+    assert "`" not in text  # no markdown code fence/backticks
