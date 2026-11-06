@@ -225,3 +225,80 @@ def test_extract_keeps_code_block_verbatim():
     assert "return w*h*2" in text
     assert "print(area(*dims, **opts))" in text
     assert "`" not in text  # no markdown code fence/backticks
+
+
+# --- #138: the XML renderer must not drop text outside head/p/code/list/table ---
+
+from blue_data_web_source.source.web.extractor import _render_xml  # noqa: E402
+
+
+@pytest.mark.parametrize("xml,expected", [
+    ("<doc><main><quote>Sentinel quote text</quote></main></doc>", "Sentinel quote text"),
+    ("<doc><main><item>Sentinel top level item</item></main></doc>", "Sentinel top level item"),
+    ("<doc><main>Sentinel text directly in main</main></doc>", "Sentinel text directly in main"),
+    ('<doc><main><head rend="h2">H</head>Sentinel tail after a heading</main></doc>',
+     "Sentinel tail after a heading"),
+    ("<doc><main><p>a</p><lb/>Sentinel tail after a line break</main></doc>",
+     "Sentinel tail after a line break"),
+])
+def test_render_xml_keeps_text_outside_known_blocks(xml, expected):
+    assert expected in _render_xml(xml)
+
+
+def test_render_xml_line_break_separates_words():
+    # <lb/> is a line break, not a word-join: "a<lb/>b" must not become "ab".
+    out = _render_xml("<doc><main><p>alpha<lb/>beta</p></main></doc>")
+    assert "alpha" in out and "beta" in out and "alphabeta" not in out
+
+
+def test_render_xml_invariant_every_text_node_under_main_is_rendered():
+    # Invariant (#138): every non-whitespace text node under <main> appears in the output.
+    from lxml import etree
+
+    xml = (
+        '<doc><main>'
+        'LeadMainText'
+        '<head rend="h1">HeadingText</head>AfterHeadingTail'
+        '<p>ParagraphText <hi>EmphasisText</hi> trailing</p>AfterParagraphTail'
+        '<quote>QuoteText</quote>'
+        '<list><item>ItemOneText</item><item>ItemTwo <ref target="/x">LinkText</ref></item></list>'
+        '<item>TopLevelItemText</item>'
+        '<code>CodeVerbatimText</code>'
+        '</main></doc>'
+    )
+    rendered = _render_xml(xml)
+    root = etree.fromstring(xml.encode("utf-8"))
+    main = root.find("main")
+    fragments = []
+    for el in main.iter():
+        for piece in (el.text, el.tail):
+            if piece and piece.strip():
+                fragments.append(piece.strip())
+    missing = [f for f in fragments if f not in rendered]
+    assert not missing, f"text nodes dropped by the renderer: {missing}\nrendered:\n{rendered}"
+
+
+def test_extract_keeps_blockquote_without_inner_paragraph():
+    # A <blockquote> with text directly inside (no inner <p>) was dropped (#138).
+    html = ("<html><head><title>Q</title></head><body><article><h1>Q</h1>"
+            f"{_PAD}<blockquote>Sentinelquote: a quoted passage sitting directly inside the "
+            "blockquote element, with no inner paragraph wrapping it.</blockquote>"
+            f"<p>A closing paragraph after the quotation, long enough to count as body.</p>"
+            "</article></body></html>")
+    result = WebExtractor().extract(html, "https://example.test/q")
+    assert result is not None
+    assert "Sentinelquote" in result.text
+
+
+def test_extract_keeps_bare_list_item_page():
+    # A page of bare <li> items (no <p>) ingested as no_content, losing every item (#138).
+    items = "".join(
+        f"<li><span>0{i}/26</span><a href='/p{i}'>Sentinelbare number {i} about "
+        f"something rather interesting and long</a></li>"
+        for i in range(1, 30)
+    )
+    html = f"<html><head><title>Index</title></head><body>{items}</body></html>"
+    result = WebExtractor().extract(html, "https://example.test/idx")
+    assert result is not None
+    assert "Sentinelbare number 1" in result.text
+    assert "Sentinelbare number 29" in result.text
