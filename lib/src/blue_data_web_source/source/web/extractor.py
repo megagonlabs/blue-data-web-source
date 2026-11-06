@@ -55,8 +55,13 @@ def _inline_text(el) -> str:
         parts.append(el.text)
     children = list(el)
     for i, child in enumerate(children):
+        if child.tag == "lb":  # a line break separates words (#138)
+            parts.append("\n" + (child.tail or ""))
+            continue
         parts.append("".join(child.itertext()))
         tail = child.tail or ""
+        if child.tag in ("quote", "list", "p"):  # a block child inside an item: keep it apart
+            parts.insert(len(parts) - 1, " ")
         if not tail and i + 1 < len(children):
             parts.append(" ")  # adjacent inline spans with no separator in the XML
         else:
@@ -90,9 +95,18 @@ def _render_block(el, out: list) -> None:
             line = " | ".join(c for c in cells if c)
             if line:
                 out.append(line)
+    elif (el.text or "").strip() or any(c.tag in ("hi", "ref", "lb", "code") for c in el):
+        # Any other text-bearing element — a <quote>, a top-level <item>, or a block
+        # carrying its own text/inline spans — was silently dropped by the bare
+        # descend below, losing page text on a default install (#138).
+        text = _inline_text(el)
+        if text:
+            out.append(text)
     else:
         for child in el:  # unknown container — descend
             _render_block(child, out)
+    if (el.tail or "").strip():  # text that follows a block, directly under its parent (#138)
+        out.append(el.tail.strip())
 
 
 def _render_xml(xml: str) -> str:
@@ -108,6 +122,8 @@ def _render_xml(xml: str) -> str:
     if body is None:
         return ""
     out: list = []
+    if (body.text or "").strip():  # text directly inside <main>, before any block (#138)
+        out.append(body.text.strip())
     for child in body:
         _render_block(child, out)
     return "\n\n".join(out)
