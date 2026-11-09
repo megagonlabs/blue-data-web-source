@@ -187,7 +187,13 @@ class WebPipeline:
         claimed_hash = False
         if self._freshness_store is not None:
             stored = self._freshness_store.get(effective_collection, page_id)
-            if stored and stored.get("content_hash") == content_hash:
+            # Skip as unchanged only when the content hash matches AND the current vector
+            # store actually holds the page. Freshness state can outlive or span a store
+            # — a second store, an emptied/flushed Redis, or another profile sharing the
+            # collection name — in which case reporting "unchanged" left the page
+            # unsearchable; verify the store and re-ingest when it is missing (#124).
+            if (stored and stored.get("content_hash") == content_hash
+                    and self._vector_store_has_page(effective_collection, page_id)):
                 _log.info("unchanged: %s", url)
                 self._freshness_store.set(effective_collection, page_id, {
                     **stored,
@@ -340,6 +346,22 @@ class WebPipeline:
                     effective_collection, content_hash, page_id
                 )
             raise
+
+    def _vector_store_has_page(self, collection: str, page_id: str) -> bool:
+        """True when there is nothing to verify (no vector store) or the vector store
+        actually holds this page's chunks.
+
+        The freshness state alone is not proof that the current store holds a page: it
+        can outlive or span a store (a second store, an emptied/flushed Redis, a profile
+        sharing the collection name), so a hash match there does not mean chunk 0 is in
+        the store. Verify before skipping, and re-ingest when it is missing (#124). Falls
+        back to trusting the freshness state if the backend can't list ids."""
+        if self._vector_source is None:
+            return True
+        try:
+            return bool(self._vector_source.list_ids(collection, prefix=f"{page_id}_chunk_"))
+        except Exception:
+            return True
 
     def _purge_page(self, collection: str, page_id: str, chunk_count: int) -> None:
         """Remove all stored state for a page whose content is now stale (#96).

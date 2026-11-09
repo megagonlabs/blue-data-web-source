@@ -411,6 +411,43 @@ def test_freshness_changed_content_reingests():
     assert store.get("web", _page_id())["content_hash"] != first_hash
 
 
+def _make_vector_pipeline(store):
+    from blue_data.source.vector.memory_vector_source import MemoryVectorSource
+    from blue_data_doc_source.source.document.embeddings.dummy_embedding import DummyEmbeddingModel
+    return _make_pipeline(
+        freshness_store=store,
+        vector_source=MemoryVectorSource(name="m"),
+        embedding_model=DummyEmbeddingModel(dim=8),
+    )
+
+
+def test_freshness_reingests_when_vector_store_missing_the_page_124():
+    # Freshness state can outlive or span a vector store; a hash match there must not
+    # skip a page the CURRENT store does not hold (second/emptied/flushed store) (#124).
+    from blue_data.source.vector.memory_vector_source import MemoryVectorSource
+
+    store = MemoryFreshnessStore()
+    pipeline = _make_vector_pipeline(store)
+
+    assert len(pipeline.ingest("https://example.com")) > 0          # first: ingested
+    assert pipeline.ingest("https://example.com") == []            # same store: unchanged
+
+    # Swap in a fresh (empty) vector store, keep the freshness state — the page is not in
+    # the new store, so it must re-ingest rather than report unchanged.
+    pipeline._vector_source = MemoryVectorSource(name="m2")
+    reingested = pipeline.ingest("https://example.com")
+    assert len(reingested) > 0
+    assert pipeline._vector_source.list_ids("web", prefix=_page_id())  # now stored
+
+
+def test_freshness_still_unchanged_when_store_has_the_page_124():
+    store = MemoryFreshnessStore()
+    pipeline = _make_vector_pipeline(store)
+    pipeline.ingest("https://example.com")
+    # The store still holds the page, so a re-ingest is correctly reported unchanged.
+    assert pipeline.ingest("https://example.com") == []
+
+
 def test_freshness_changed_content_updates_chunk_count():
     store = MemoryFreshnessStore()
     pipeline = _make_pipeline(freshness_store=store)
